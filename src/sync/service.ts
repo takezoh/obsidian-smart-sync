@@ -335,7 +335,7 @@ export function getErrorInfo(err: unknown): ErrorInfo {
 		if ("headers" in err) {
 			const headers = (err as { headers: unknown }).headers;
 			let ra: string | null | undefined;
-			if (headers && typeof (headers as any).get === "function") {
+			if (headers && typeof headers === "object" && "get" in headers && typeof (headers as { get: unknown }).get === "function") {
 				// Fetch API Headers object
 				ra = (headers as Headers).get("retry-after");
 			} else if (headers && typeof headers === "object") {

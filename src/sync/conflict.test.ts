@@ -256,7 +256,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("file.md")!.entity,
 				remoteFs.files.get("file.md")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -287,7 +287,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("file.md")!.entity,
 				remoteFs.files.get("file.md")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -332,7 +332,7 @@ describe("resolveConflict", () => {
 				local,
 				remote,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			// .png is not merge-eligible, falls back to keep_newer → local is newer
@@ -362,7 +362,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "file.md", "hello", 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("file.md", localFs, remoteFs, true, stateStore as any);
+			await buildSyncRecord("file.md", localFs, remoteFs, true, stateStore);
 			expect(stateStore.contents.has("file.md")).toBe(true);
 		});
 
@@ -371,7 +371,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "image.png", "binary-data", 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("image.png", localFs, remoteFs, true, stateStore as any);
+			await buildSyncRecord("image.png", localFs, remoteFs, true, stateStore);
 			expect(stateStore.contents.has("image.png")).toBe(false);
 		});
 
@@ -381,7 +381,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "big.md", bigContent, 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("big.md", localFs, remoteFs, true, stateStore as any);
+			await buildSyncRecord("big.md", localFs, remoteFs, true, stateStore);
 			expect(stateStore.contents.has("big.md")).toBe(false);
 		});
 
@@ -467,7 +467,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("data.json")!.entity,
 				remoteFs.files.get("data.json")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			// Conflicting edits to the same JSON key → conflict markers → invalid JSON → duplicate fallback
@@ -498,7 +498,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("note.canvas")!.entity,
 				remoteFs.files.get("note.canvas")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -529,7 +529,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("config.json")!.entity,
 				remoteFs.files.get("config.json")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -537,7 +537,7 @@ describe("resolveConflict", () => {
 
 			// Verify the merged result is valid JSON
 			const mergedContent = readText(localFs, "config.json");
-			const parsed = JSON.parse(mergedContent);
+			const parsed = JSON.parse(mergedContent) as { a: number; d: number };
 			expect(parsed.a).toBe(10);
 			expect(parsed.d).toBe(40);
 		});
@@ -553,10 +553,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "file.md", remoteText, 2000);
 
 			// Make remote write throw
-			const originalWrite = remoteFs.write.bind(remoteFs);
-			let writeCalls = 0;
-			remoteFs.write = async (path: string, content: ArrayBuffer, mtime?: number) => {
-				writeCalls++;
+			remoteFs.write = async (_path: string, _content: ArrayBuffer, _mtime?: number) => {
 				throw new Error("Remote write failed");
 			};
 
@@ -576,7 +573,7 @@ describe("resolveConflict", () => {
 				localFs.files.get("file.md")!.entity,
 				remoteFs.files.get("file.md")!.entity,
 				prevSync,
-				stateStore as any,
+				stateStore,
 			)).rejects.toThrow("Remote write failed");
 
 			// Local should be restored to pre-merge content

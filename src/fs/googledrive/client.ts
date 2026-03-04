@@ -69,7 +69,7 @@ export class DriveClient {
 			url: `${DRIVE_API}/files?${params.toString()}`,
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		const result = response.json;
+		const result: unknown = response.json;
 		assertDriveFileList(result);
 		return result;
 	}
@@ -167,7 +167,7 @@ export class DriveClient {
 			body: body.buffer,
 		});
 
-		const driveFile = response.json;
+		const driveFile: unknown = response.json;
 		assertDriveFile(driveFile);
 		return driveFile;
 	}
@@ -237,13 +237,13 @@ export class DriveClient {
 
 				// Final chunk — 200/201 response
 				if (isLastChunk) {
-					const driveFile = uploadResponse.json;
+					const driveFile: unknown = uploadResponse.json;
 					assertDriveFile(driveFile);
 					return driveFile;
 				}
 
 				// Non-last chunk succeeded with 200/201 (unexpected but valid)
-				const driveFile = uploadResponse.json;
+				const driveFile: unknown = uploadResponse.json;
 				assertDriveFile(driveFile);
 				return driveFile;
 			} catch (err) {
@@ -269,7 +269,7 @@ export class DriveClient {
 				body: new ArrayBuffer(0),
 			}
 		);
-		const driveFile = uploadResponse.json;
+		const driveFile: unknown = uploadResponse.json;
 		assertDriveFile(driveFile);
 		return driveFile;
 	}
@@ -290,7 +290,7 @@ export class DriveClient {
 				parents: [parentId],
 			}),
 		});
-		const folder = response.json;
+		const folder: unknown = response.json;
 		assertDriveFile(folder);
 		return folder;
 	}
@@ -316,7 +316,7 @@ export class DriveClient {
 			},
 			body: JSON.stringify(metadata),
 		});
-		const updated = response.json;
+		const updated: unknown = response.json;
 		assertDriveFile(updated);
 		return updated;
 	}
@@ -350,7 +350,7 @@ export class DriveClient {
 			url: `${DRIVE_API}/changes/startPageToken`,
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		const result = response.json;
+		const result: unknown = response.json;
 		assertStartPageTokenResponse(result);
 		return result.startPageToken;
 	}
@@ -372,7 +372,7 @@ export class DriveClient {
 			url: `${DRIVE_API}/changes?${params.toString()}`,
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		const result = response.json;
+		const result: unknown = response.json;
 		assertDriveChangeList(result);
 		return result;
 	}

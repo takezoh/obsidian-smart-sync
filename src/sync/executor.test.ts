@@ -404,9 +404,7 @@ describe("SyncExecutor", () => {
 		// Simulate the file being updated between decision and execution:
 		// after read() the mock stat will return a different mtime
 		const originalStat = localFs.stat.bind(localFs);
-		let statCalls = 0;
 		localFs.stat = async (path: string) => {
-			statCalls++;
 			const result = await originalStat(path);
 			if (result && path === "fresh.md") {
 				// Return a fresh entity with updated mtime

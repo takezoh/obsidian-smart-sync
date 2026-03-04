@@ -103,7 +103,7 @@ describe("SyncStateStore", () => {
 
 		const result = await store.getContent("notes/test.md");
 		expect(result).toBeDefined();
-		const text = new TextDecoder().decode(result!);
+		const text = new TextDecoder().decode(result);
 		expect(text).toBe("hello world");
 	});
 
@@ -147,9 +147,10 @@ describe("SyncStateStore", () => {
 		await store.put(makeRecord("a.md"));
 
 		// Simulate onversionchange: close db and null it out
-		(store as any).db?.close();
-		(store as any).db = null;
-		(store as any).openPromise = null;
+		const internal = store as unknown as { db: IDBDatabase | null; openPromise: Promise<void> | null };
+		internal.db?.close();
+		internal.db = null;
+		internal.openPromise = null;
 
 		// getDb() should re-open and recover
 		const result = await store.get("a.md");

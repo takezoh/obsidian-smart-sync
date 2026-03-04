@@ -1,21 +1,34 @@
 import { describe, it, expect, vi } from "vitest";
 import { matchGlob } from "../utils/glob";
 import "fake-indexeddb/auto";
+import type { SmartSyncSettings } from "../settings";
 import { SyncService, SyncServiceDeps, getErrorInfo, isRateLimitError } from "./service";
 import { createMockFs, addFile } from "../__mocks__/sync-test-helpers";
 
+function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSettings {
+	return {
+		vaultId: `test-${Math.random()}`,
+		backendType: "none",
+		excludePatterns: [],
+		conflictStrategy: "keep_newer",
+		enableThreeWayMerge: false,
+		autoSyncIntervalMinutes: 0,
+		mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
+		mobileMaxFileSizeMB: 10,
+		driveFolderId: "",
+		refreshToken: "",
+		accessToken: "",
+		accessTokenExpiry: 0,
+		changesStartPageToken: "",
+		pendingCodeVerifier: "",
+		pendingAuthState: "",
+		...overrides,
+	};
+}
+
 function createMockDeps(overrides: Partial<SyncServiceDeps> = {}): SyncServiceDeps {
 	return {
-		getSettings: () => ({
-			vaultId: `test-${Math.random()}`,
-			backendType: "none",
-			excludePatterns: [],
-			conflictStrategy: "keep_newer" as const,
-			enableThreeWayMerge: false,
-			autoSyncIntervalMinutes: 0,
-			mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-			mobileMaxFileSizeMB: 10,
-		} as any),
+		getSettings: () => mockSettings(),
 		saveSettings: vi.fn().mockResolvedValue(undefined),
 		localFs: () => createMockFs("local"),
 		remoteFs: () => createMockFs("remote"),
@@ -59,19 +72,15 @@ describe("SyncService", () => {
 	});
 
 	it("isExcluded respects exclude patterns", () => {
+		const configDir = ".obsidian"; // eslint-disable-line obsidianmd/hardcoded-config-path
 		const deps = createMockDeps({
-			getSettings: () => ({
-				vaultId: "test",
-				backendType: "none",
-				excludePatterns: [".obsidian/**", "*.tmp"],
-				conflictStrategy: "keep_newer" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-			} as any),
+			getSettings: () => mockSettings({
+				excludePatterns: [`${configDir}/**`, "*.tmp"],
+			}),
 		});
 		const service = new SyncService(deps);
 
-		expect(service.isExcluded(".obsidian/plugins/test")).toBe(true);
+		expect(service.isExcluded(`${configDir}/plugins/test`)).toBe(true);
 		expect(service.isExcluded("notes/hello.md")).toBe(false);
 	});
 });
@@ -120,16 +129,7 @@ describe("SyncService — mobile filtering", () => {
 	it("isExcluded allows .md files on mobile", () => {
 		const deps = createMockDeps({
 			isMobile: () => true,
-			getSettings: () => ({
-				vaultId: "test",
-				backendType: "none",
-				excludePatterns: [],
-				conflictStrategy: "keep_newer" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-				mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			getSettings: () => mockSettings(),
 		});
 		const service = new SyncService(deps);
 
@@ -140,16 +140,7 @@ describe("SyncService — mobile filtering", () => {
 	it("isExcluded blocks non-matching files on mobile", () => {
 		const deps = createMockDeps({
 			isMobile: () => true,
-			getSettings: () => ({
-				vaultId: "test",
-				backendType: "none",
-				excludePatterns: [],
-				conflictStrategy: "keep_newer" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-				mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			getSettings: () => mockSettings(),
 		});
 		const service = new SyncService(deps);
 
@@ -160,16 +151,7 @@ describe("SyncService — mobile filtering", () => {
 	it("isExcluded allows all files on desktop", () => {
 		const deps = createMockDeps({
 			isMobile: () => false,
-			getSettings: () => ({
-				vaultId: "test",
-				backendType: "none",
-				excludePatterns: [],
-				conflictStrategy: "keep_newer" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-				mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			getSettings: () => mockSettings(),
 		});
 		const service = new SyncService(deps);
 
@@ -180,16 +162,10 @@ describe("SyncService — mobile filtering", () => {
 	it("excludePatterns still applies on mobile alongside include patterns", () => {
 		const deps = createMockDeps({
 			isMobile: () => true,
-			getSettings: () => ({
-				vaultId: "test",
-				backendType: "none",
+			getSettings: () => mockSettings({
 				excludePatterns: [".trash/**"],
-				conflictStrategy: "keep_newer" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
 				mobileIncludePatterns: ["**/*.md"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			}),
 		});
 		const service = new SyncService(deps);
 
@@ -383,9 +359,10 @@ describe("matchGlob", () => {
 	});
 
 	it("matches directory globstar prefix", () => {
-		expect(matchGlob(".obsidian/**", ".obsidian/plugins/test")).toBe(true);
-		expect(matchGlob(".obsidian/**", ".obsidian/config")).toBe(true);
-		expect(matchGlob(".obsidian/**", "notes/.obsidian/config")).toBe(false);
+		const configDir = ".obsidian"; // eslint-disable-line obsidianmd/hardcoded-config-path
+		expect(matchGlob(`${configDir}/**`, `${configDir}/plugins/test`)).toBe(true);
+		expect(matchGlob(`${configDir}/**`, `${configDir}/config`)).toBe(true);
+		expect(matchGlob(`${configDir}/**`, `notes/${configDir}/config`)).toBe(false);
 	});
 
 	it("matches .trash/**", () => {
@@ -510,16 +487,7 @@ describe("SyncService — bulk conflict resolution", () => {
 			remoteFs: () => remoteFs,
 			resolveConflictBatch,
 			resolveConflict,
-			getSettings: () => ({
-				vaultId: `test-${Math.random()}`,
-				backendType: "none",
-				excludePatterns: [],
-				conflictStrategy: "ask" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-				mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			getSettings: () => mockSettings({ conflictStrategy: "ask" }),
 		});
 		const service = new SyncService(deps);
 
@@ -547,16 +515,7 @@ describe("SyncService — bulk conflict resolution", () => {
 			remoteFs: () => remoteFs,
 			resolveConflictBatch,
 			resolveConflict,
-			getSettings: () => ({
-				vaultId: `test-${Math.random()}`,
-				backendType: "none",
-				excludePatterns: [],
-				conflictStrategy: "ask" as const,
-				enableThreeWayMerge: false,
-				autoSyncIntervalMinutes: 0,
-				mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
-				mobileMaxFileSizeMB: 10,
-			} as any),
+			getSettings: () => mockSettings({ conflictStrategy: "ask" }),
 		});
 		const service = new SyncService(deps);
 

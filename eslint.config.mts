@@ -8,12 +8,14 @@ export default tseslint.config(
 		languageOptions: {
 			globals: {
 				...globals.browser,
+				process: "readonly",
 			},
 			parserOptions: {
 				projectService: {
 					allowDefaultProject: [
 						'eslint.config.js',
-						'manifest.json'
+						'manifest.json',
+						'vitest.config.ts'
 					]
 				},
 				tsconfigRootDir: import.meta.dirname,

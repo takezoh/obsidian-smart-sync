@@ -1,7 +1,34 @@
 import { describe, it, expect, vi } from "vitest";
+import type { RequestUrlResponse } from "obsidian";
 import { assertDriveFile, assertDriveFileList, assertDriveChangeList } from "./types";
+import type { GoogleAuth } from "./auth";
 
 vi.mock("obsidian");
+
+/** Simplified requestUrl type for test mocks (avoids RequestUrlResponsePromise complexity) */
+type MockableRequestUrl = (request: string | import("obsidian").RequestUrlParam) => Promise<RequestUrlResponse>;
+
+/** Helper to spy on the mocked obsidian.requestUrl with proper typing */
+async function spyRequestUrl() {
+	const obsidian = await import("obsidian");
+	return vi.spyOn(obsidian as unknown as { requestUrl: MockableRequestUrl }, "requestUrl");
+}
+
+/** Shorthand to build a partial RequestUrlResponse for mocks */
+function mockRes(json: unknown, extra?: Partial<RequestUrlResponse>): RequestUrlResponse {
+	return { status: 200, headers: {}, arrayBuffer: new ArrayBuffer(0), text: "", json, ...extra } as RequestUrlResponse;
+}
+
+/** Type for accessing private fields on GoogleDriveFs in tests */
+interface GoogleDriveFsInternal {
+	initialized: boolean;
+}
+
+/** Type for accessing private fields on GoogleDriveProvider in tests */
+interface GoogleDriveProviderInternal {
+	auth: GoogleAuth;
+	getOrCreateAuth: (settings: unknown) => GoogleAuth;
+}
 
 // ---- L10: Runtime validator tests ----
 
@@ -124,20 +151,16 @@ describe("parseAuthInput (via provider)", () => {
 
 describe("GoogleAuth.getAccessToken concurrency", () => {
 	it("deduplicates concurrent refresh calls", async () => {
-		const obsidian = await import("obsidian");
 		let callCount = 0;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
 			async () => {
 				callCount++;
 				await new Promise((r) => setTimeout(r, 50));
-				return {
-					json: {
-						access_token: "new-access-token",
-						expires_in: 3600,
-						token_type: "Bearer",
-					},
-				};
+				return mockRes({
+					access_token: "new-access-token",
+					expires_in: 3600,
+					token_type: "Bearer",
+				});
 			}
 		);
 
@@ -268,21 +291,17 @@ describe("GoogleAuth.exchangeCode state validation", () => {
 
 describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 	it("restores PKCE state on existing auth that lacks it", async () => {
-		const obsidian = await import("obsidian");
-		// Mock requestUrl so exchangeCode succeeds
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockResolvedValue({
-			json: {
-				access_token: "new-access",
-				expires_in: 3600,
-				token_type: "Bearer",
-				refresh_token: "new-refresh",
-			},
-		});
+		const mockRequestUrl = (await spyRequestUrl()).mockResolvedValue(mockRes({
+			access_token: "new-access",
+			expires_in: 3600,
+			token_type: "Bearer",
+			refresh_token: "new-refresh",
+		}));
 
 		const { GoogleDriveProvider } = await import("./provider");
 		const { GoogleAuth } = await import("./auth");
 		const provider = new GoogleDriveProvider();
+		const internal = provider as unknown as GoogleDriveProviderInternal;
 
 		const settings = {
 			pendingCodeVerifier: "saved-verifier",
@@ -290,13 +309,10 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 		} as never;
 
 		// Create a provider with an existing auth that has no PKCE state
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(provider as any).auth = new GoogleAuth();
+		internal.auth = new GoogleAuth();
 
 		// Verify auth initially has no PKCE state
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		expect(((provider as any).auth as InstanceType<typeof GoogleAuth>).getAuthState()).toBeNull();
+		expect(internal.auth.getAuthState()).toBeNull();
 
 		// completeConnect should restore PKCE state from settings then exchange
 		const result = await provider.completeConnect(
@@ -307,9 +323,7 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 		// exchangeCode should have succeeded (state matched after restoration)
 		expect(result.refreshToken).toBe("new-refresh");
 		// State is cleared after successful exchange
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		expect(((provider as any).auth as InstanceType<typeof GoogleAuth>).getAuthState()).toBeNull();
+		expect(internal.auth.getAuthState()).toBeNull();
 
 		mockRequestUrl.mockRestore();
 	});
@@ -322,12 +336,12 @@ describe("GoogleDriveProvider.getOrCreateAuth", () => {
 		const { GoogleDriveProvider } = await import("./provider");
 		const { GoogleAuth } = await import("./auth");
 		const provider = new GoogleDriveProvider();
+		const internal = provider as unknown as GoogleDriveProviderInternal;
 
 		// Set up existing auth with old refresh token
 		const oldAuth = new GoogleAuth();
 		oldAuth.setTokens("old-refresh", "", 0);
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(provider as any).auth = oldAuth;
+		internal.auth = oldAuth;
 
 		const settings = {
 			refreshToken: "new-refresh",
@@ -338,8 +352,7 @@ describe("GoogleDriveProvider.getOrCreateAuth", () => {
 		} as never;
 
 		// The refreshToken mismatch should create a new auth instance
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const auth = (provider as any).getOrCreateAuth(settings) as InstanceType<typeof GoogleAuth>;
+		const auth = internal.getOrCreateAuth(settings);
 		expect(auth).not.toBe(oldAuth);
 	});
 });
@@ -348,9 +361,7 @@ describe("GoogleDriveProvider.getOrCreateAuth", () => {
 
 describe("GoogleAuth.revokeToken", () => {
 	it("calls Google revoke endpoint", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockResolvedValue({});
+		const mockRequestUrl = (await spyRequestUrl()).mockResolvedValue(mockRes({}));
 
 		const { GoogleAuth } = await import("./auth");
 		const auth = new GoogleAuth();
@@ -360,12 +371,14 @@ describe("GoogleAuth.revokeToken", () => {
 
 		expect(mockRequestUrl).toHaveBeenCalledWith(
 			expect.objectContaining({
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 				url: expect.stringContaining("oauth2.googleapis.com/revoke"),
 				method: "POST",
 			})
 		);
 		expect(mockRequestUrl).toHaveBeenCalledWith(
 			expect.objectContaining({
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 				url: expect.stringContaining("my-refresh-token"),
 			})
 		);
@@ -374,9 +387,7 @@ describe("GoogleAuth.revokeToken", () => {
 	});
 
 	it("does not throw when revoke fails", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockRejectedValue(
+		const mockRequestUrl = (await spyRequestUrl()).mockRejectedValue(
 			new Error("Network error")
 		);
 
@@ -391,9 +402,7 @@ describe("GoogleAuth.revokeToken", () => {
 	});
 
 	it("skips revoke when no token is set", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl");
+		const mockRequestUrl = await spyRequestUrl();
 
 		const { GoogleAuth } = await import("./auth");
 		const auth = new GoogleAuth();
@@ -409,9 +418,7 @@ describe("GoogleAuth.revokeToken", () => {
 
 describe("DriveClient error wrapping", () => {
 	it("wraps errors with operation name", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockRejectedValue(
+		const mockRequestUrl = (await spyRequestUrl()).mockRejectedValue(
 			new Error("Request failed")
 		);
 
@@ -429,13 +436,11 @@ describe("DriveClient error wrapping", () => {
 	});
 
 	it("preserves HTTP status and headers on wrapped errors", async () => {
-		const obsidian = await import("obsidian");
 		const originalError = Object.assign(new Error("Forbidden"), {
 			status: 403,
 			headers: { "retry-after": "30" },
 		});
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockRejectedValue(originalError);
+		const mockRequestUrl = (await spyRequestUrl()).mockRejectedValue(originalError);
 
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
@@ -449,10 +454,9 @@ describe("DriveClient error wrapping", () => {
 		} catch (err) {
 			expect(err).toBeInstanceOf(Error);
 			expect((err as Error).message).toContain("Drive API downloadFile failed");
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			expect((err as any).status).toBe(403);
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			expect((err as any).headers).toEqual({ "retry-after": "30" });
+			const errObj = err as Record<string, unknown>;
+			expect(errObj.status).toBe(403);
+			expect(errObj.headers).toEqual({ "retry-after": "30" });
 		}
 
 		mockRequestUrl.mockRestore();
@@ -463,11 +467,9 @@ describe("DriveClient error wrapping", () => {
 
 describe("DriveClient.uploadFile modifiedTime default", () => {
 	it("does not send epoch (1970) when modifiedTime is omitted", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(async () => ({
-			json: { id: "f1", name: "test.txt", mimeType: "text/plain" },
-		}));
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async () => mockRes({ id: "f1", name: "test.txt", mimeType: "text/plain" })
+		);
 
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
@@ -496,18 +498,16 @@ describe("DriveClient.uploadFile modifiedTime default", () => {
 
 describe("GoogleDriveFs.write md5Checksum", () => {
 	it("includes md5Checksum in backendMeta when returned by Drive API", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(async () => ({
-			json: {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async () => mockRes({
 				id: "file1",
 				name: "test.md",
 				mimeType: "text/plain",
 				modifiedTime: "2024-01-01T00:00:00.000Z",
 				size: "5",
 				md5Checksum: "abc123hash",
-			},
-		}));
+			})
+		);
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
@@ -517,9 +517,7 @@ describe("GoogleDriveFs.write md5Checksum", () => {
 		const client = new DriveClient(auth);
 		const fs = new GoogleDriveFs(client, "root");
 
-		// Initialize cache with empty state
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(fs as any).initialized = true;
+		(fs as unknown as GoogleDriveFsInternal).initialized = true;
 
 		const content = new TextEncoder().encode("hello").buffer as ArrayBuffer;
 		const result = await fs.write("test.md", content, Date.now());
@@ -531,16 +529,14 @@ describe("GoogleDriveFs.write md5Checksum", () => {
 	});
 
 	it("handles missing md5Checksum (Google Docs) gracefully", async () => {
-		const obsidian = await import("obsidian");
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(async () => ({
-			json: {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async () => mockRes({
 				id: "doc1",
 				name: "doc.gdoc",
 				mimeType: "application/vnd.google-apps.document",
 				modifiedTime: "2024-01-01T00:00:00.000Z",
-			},
-		}));
+			})
+		);
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
@@ -550,8 +546,7 @@ describe("GoogleDriveFs.write md5Checksum", () => {
 		const client = new DriveClient(auth);
 		const fs = new GoogleDriveFs(client, "root");
 
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(fs as any).initialized = true;
+		(fs as unknown as GoogleDriveFsInternal).initialized = true;
 
 		const content = new TextEncoder().encode("hello").buffer as ArrayBuffer;
 		const result = await fs.write("doc.gdoc", content, Date.now());
@@ -747,7 +742,6 @@ describe("GoogleDriveFs circular parent reference", () => {
 
 describe("DriveClient chunked resumable upload", () => {
 	it("uploads in multiple chunks (308 → 308 → 200)", async () => {
-		const obsidian = await import("obsidian");
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
 
@@ -755,18 +749,14 @@ describe("DriveClient chunked resumable upload", () => {
 		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(
-			async (...args: any[]) => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async (...args) => {
 				const opts = args[0] as { url: string; method?: string; headers?: Record<string, string> };
 				callCount++;
 
 				// First call: initiate resumable upload
 				if (callCount === 1) {
-					return {
-						headers: { location: "https://upload.example.com/resumable-session" },
-						json: {},
-					};
+					return mockRes({}, { headers: { location: "https://upload.example.com/resumable-session" } });
 				}
 
 				// Chunk uploads: check Content-Range header
@@ -793,14 +783,12 @@ describe("DriveClient chunked resumable upload", () => {
 				// Fourth call: final chunk → 200
 				if (callCount === 4) {
 					expect(contentRange).toMatch(/bytes \d+-\d+\/\d+/);
-					return {
-						json: {
-							id: "uploaded-file",
-							name: "large.bin",
-							mimeType: "application/octet-stream",
-							md5Checksum: "finalhash",
-						},
-					};
+					return mockRes({
+						id: "uploaded-file",
+						name: "large.bin",
+						mimeType: "application/octet-stream",
+						md5Checksum: "finalhash",
+					});
 				}
 
 				throw new Error("Unexpected call");
@@ -826,7 +814,6 @@ describe("DriveClient chunked resumable upload", () => {
 	});
 
 	it("parses Range header to determine resume offset", async () => {
-		const obsidian = await import("obsidian");
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
 
@@ -835,16 +822,12 @@ describe("DriveClient chunked resumable upload", () => {
 
 		const uploadedRanges: string[] = [];
 		let callCount = 0;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(
-			async (...args: any[]) => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async (...args) => {
 				const opts = args[0] as { headers?: Record<string, string> };
 				callCount++;
 				if (callCount === 1) {
-					return {
-						headers: { location: "https://upload.example.com/session" },
-						json: {},
-					};
+					return mockRes({}, { headers: { location: "https://upload.example.com/session" } });
 				}
 
 				const cr = opts.headers?.["Content-Range"];
@@ -860,13 +843,11 @@ describe("DriveClient chunked resumable upload", () => {
 				}
 
 				// Final chunk completes
-				return {
-					json: {
-						id: "f1",
-						name: "file.bin",
-						mimeType: "application/octet-stream",
-					},
-				};
+				return mockRes({
+					id: "f1",
+					name: "file.bin",
+					mimeType: "application/octet-stream",
+				});
 			}
 		);
 
@@ -881,7 +862,6 @@ describe("DriveClient chunked resumable upload", () => {
 	});
 
 	it("propagates non-308 errors during chunk upload", async () => {
-		const obsidian = await import("obsidian");
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
 
@@ -889,14 +869,10 @@ describe("DriveClient chunked resumable upload", () => {
 		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
 			callCount++;
 			if (callCount === 1) {
-				return {
-					headers: { location: "https://upload.example.com/session" },
-					json: {},
-				};
+				return mockRes({}, { headers: { location: "https://upload.example.com/session" } });
 			}
 			// Chunk upload fails with 500
 			const err = Object.assign(new Error("Internal Server Error"), {
@@ -916,7 +892,6 @@ describe("DriveClient chunked resumable upload", () => {
 	});
 
 	it("handles single chunk upload (file just over threshold)", async () => {
-		const obsidian = await import("obsidian");
 		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
 
@@ -924,23 +899,17 @@ describe("DriveClient chunked resumable upload", () => {
 		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const mockRequestUrl = vi.spyOn(obsidian as any, "requestUrl").mockImplementation(async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
 			callCount++;
 			if (callCount === 1) {
-				return {
-					headers: { location: "https://upload.example.com/session" },
-					json: {},
-				};
+				return mockRes({}, { headers: { location: "https://upload.example.com/session" } });
 			}
 			// Single chunk completes immediately
-			return {
-				json: {
-					id: "f1",
-					name: "medium.bin",
-					mimeType: "application/octet-stream",
-				},
-			};
+			return mockRes({
+				id: "f1",
+				name: "medium.bin",
+				mimeType: "application/octet-stream",
+			});
 		});
 
 		const client = new DriveClient(auth);

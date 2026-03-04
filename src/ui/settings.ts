@@ -118,7 +118,7 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Mobile include patterns")
 			.setDesc(
-				"Glob patterns for files to sync on mobile, one per line. Only matching files will be synced. By default, images, PDFs, and other attachments are excluded to save bandwidth."
+				"Glob patterns for files to sync on mobile, one per line. Only matching files will be synced. By default, images and other attachments are excluded to save bandwidth."
 			)
 			.addTextArea((text) =>
 				text
@@ -136,6 +136,7 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setName("Mobile max file size (MB)")
 			.setDesc(
 				"Files larger than this will be skipped on mobile."

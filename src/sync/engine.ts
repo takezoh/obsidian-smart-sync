@@ -90,9 +90,9 @@ function computeDecision(entity: MixedEntity): SyncDecision {
 	// Both exist, no previous sync — both created independently
 	if (localExists && remoteExists && !prevExists) {
 		// Skip conflict if content is identical (both hashes present and match)
-		if (local!.hash && remote!.hash &&
-			local!.hash === remote!.hash &&
-			local!.size === remote!.size) {
+		if (local?.hash && remote?.hash &&
+			local.hash === remote.hash &&
+			local.size === remote.size) {
 			return { ...base, decision: "no_action" };
 		}
 		return { ...base, decision: "conflict_both_created" };

@@ -69,7 +69,7 @@ export function createMockStateStore(): {
 		async clear() { records.clear(); contents.clear(); },
 		async putContent(path: string, content: ArrayBuffer) { contents.set(path, content); },
 		async getContent(path: string) { return contents.get(path); },
-	} as any;
+	} as unknown as { records: Map<string, SyncRecord>; contents: Map<string, ArrayBuffer> } & SyncStateStore;
 }
 
 /** Create a FileEntity + ArrayBuffer pair from text content */

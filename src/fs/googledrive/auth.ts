@@ -115,7 +115,7 @@ export class GoogleAuth {
 			body: params.toString(),
 		});
 
-		const token = response.json;
+		const token: unknown = response.json;
 		assertTokenResponse(token);
 		this.accessToken = token.access_token;
 		this.accessTokenExpiry = Date.now() + token.expires_in * 1000;
@@ -172,7 +172,7 @@ export class GoogleAuth {
 			body: params.toString(),
 		});
 
-		const token = response.json;
+		const token: unknown = response.json;
 		assertTokenResponse(token);
 		this.accessToken = token.access_token;
 		this.accessTokenExpiry = Date.now() + token.expires_in * 1000;
