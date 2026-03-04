@@ -1,36 +1,70 @@
-import {App, PluginSettingTab, Setting} from "obsidian";
-import MyPlugin from "./main";
+import type { ConflictStrategy } from "./fs/types";
 
-export interface MyPluginSettings {
-	mySetting: string;
+export interface SmartSyncSettings {
+	/** Unique identifier for this vault (used as IndexedDB key) */
+	vaultId: string;
+	/** Selected backend type (e.g. "googledrive") */
+	backendType: string;
+	/** Auto-sync interval in minutes (0 = disabled) */
+	autoSyncIntervalMinutes: number;
+	/** Strategy for conflict resolution */
+	conflictStrategy: ConflictStrategy;
+	/** Glob patterns to exclude from sync */
+	excludePatterns: string[];
+	/** Enable 3-way merge for text files */
+	enableThreeWayMerge: boolean;
+	/** Glob patterns for files to include on mobile */
+	mobileIncludePatterns: string[];
+	/** Maximum file size in MB to sync on mobile */
+	mobileMaxFileSizeMB: number;
+
+	// --- Google Drive backend fields ---
+	// These live at the top level for simplicity. Each backend reads
+	// only the fields it needs; unknown fields are ignored.
+	/** Google Drive folder ID to sync with */
+	driveFolderId: string;
+	/** OAuth refresh token */
+	refreshToken: string;
+	/** OAuth access token (transient, cached) */
+	accessToken: string;
+	/** Access token expiry (Unix epoch ms) */
+	accessTokenExpiry: number;
+	/** Google Drive changes.list startPageToken for incremental sync */
+	changesStartPageToken: string;
+	/** Token exchange server URL */
+	tokenExchangeUrl: string;
+	/** OAuth client ID */
+	oauthClientId: string;
+	/** Pending PKCE code verifier (survives plugin reload during auth flow) */
+	pendingCodeVerifier: string;
+	/** Pending auth state (survives plugin reload during auth flow) */
+	pendingAuthState: string;
 }
 
-export const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+export const DEFAULT_SETTINGS: SmartSyncSettings = {
+	vaultId: "",
+	backendType: "googledrive",
+	autoSyncIntervalMinutes: 5,
+	conflictStrategy: "keep_newer",
+	excludePatterns: [".trash/**"],
+	enableThreeWayMerge: false,
+	mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
+	mobileMaxFileSizeMB: 10,
+	driveFolderId: "",
+	refreshToken: "",
+	accessToken: "",
+	accessTokenExpiry: 0,
+	changesStartPageToken: "",
+	tokenExchangeUrl: "",
+	oauthClientId: "",
+	pendingCodeVerifier: "",
+	pendingAuthState: "",
+};
 
-export class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Settings #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+/**
+ * Get the default exclude patterns including the vault's config directory.
+ * Must be called after the vault is available to resolve configDir.
+ */
+export function getDefaultExcludePatterns(configDir: string): string[] {
+	return [`${configDir}/**`, ".trash/**"];
 }

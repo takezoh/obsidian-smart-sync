@@ -1,8 +1,32 @@
-/*
+/* Smart Sync — Conflict modal styles */
+.smart-sync-conflict-desc {
+	margin-bottom: 12px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.smart-sync-conflict-info {
+	margin: 4px 0;
+	font-size: 0.9em;
+	color: var(--text-muted);
+}
 
-If your plugin does not need CSS, delete this file.
+.smart-sync-conflict-info strong {
+	color: var(--text-normal);
+}
 
-*/
+/* Conflict summary modal styles */
+.smart-sync-summary-desc {
+	margin-bottom: 12px;
+}
+
+.smart-sync-summary-list {
+	max-height: 200px;
+	overflow-y: auto;
+	margin: 8px 0;
+	padding-left: 20px;
+	font-size: 0.9em;
+	color: var(--text-muted);
+}
+
+.smart-sync-summary-more {
+	font-style: italic;
+}

@@ -227,7 +227,7 @@ interface IBackendProvider {
   isConnected(settings: SmartSyncSettings): boolean;
   startConnect(app: App, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings> | void>;
   completeConnect(code: string, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
-  disconnect(settings: SmartSyncSettings): Partial<SmartSyncSettings>;
+  disconnect(settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
   renderSettings(container: HTMLElement, settings: SmartSyncSettings, onSave: () => void, actions: BackendConnectionActions): void;
   readFsState(fs: IFileSystem): Partial<SmartSyncSettings>;
 }
@@ -628,3 +628,25 @@ When no `SyncRecord` exists for a file:
 5. **TOCTOU races**: Delete propagation re-checks via `stat()`. Skips if the other side has changed
 6. **Network reconnect + auto-sync overlap**: When the browser comes back online just before an auto-sync timer fires, two sequential syncs may run. The `syncMutex` prevents concurrent execution, and `syncPending` deduplicates requests during an active sync. However, if the first sync completes before the second trigger fires, both execute independently. Impact is minimal — the second sync uses `changes.list` incremental fetch with no new changes
 7. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores `md5Checksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads — however, this would couple the sync engine to a backend-specific field, conflicting with the backend-agnostic design
+
+---
+
+## Known TODOs
+
+### High — Performance
+
+1. **`fullScan()` path resolution O(n×d) → O(n)** (`fs/googledrive/index.ts:67-74`)
+   - `resolveFilePath()` traverses the parent chain for each file, resulting in O(n×d) complexity (n = file count, d = average depth)
+   - Fix: Process files in topological order (parent → child) so each file's parent path is already resolved
+   - Impact is limited to initial full scan only — subsequent syncs use `changes.list` for incremental updates
+
+2. **`listAllFiles()` parallelization** (`fs/googledrive/client.ts:78-99`)
+   - BFS traversal issues one `listFiles()` call per folder sequentially
+   - Fix: Parallelize folder-level requests with bounded concurrency (3–5 concurrent requests)
+   - Currently sequential to avoid rate limits — any parallelization should be conservative
+
+### Medium — Recognized limitations
+
+3. **In-memory metadata cache only** — `changesStartPageToken` is persisted in settings, but `pathToFile` / `idToPath` / `folders` caches are rebuilt from scratch on each plugin load via full scan. Persisting to IndexedDB would eliminate the initial full scan on reload
+4. **`rewriteChildPaths()` / `removePath()` O(n) scan** — Folder rename and delete operations iterate all cache entries to find children. A trie or parent→children index would reduce this to O(k) where k = number of children
+5. **Token exchange URL allows `http://localhost`** — Accepted without restriction for local development. No explicit dev-environment check exists; production deployments should enforce HTTPS-only

@@ -1,90 +1,59 @@
-# Obsidian Sample Plugin
+# Smart Sync
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+A community plugin for bidirectional sync between your Obsidian vault and cloud storage.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Detects file creation, modification, deletion, and renames on both local and remote sides, then safely synchronizes changes. For concurrent text edits, automatic 3-way merge is also available.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+Currently supports Google Drive as a storage backend.
 
-## First time developing plugins?
+## Features
 
-Quick starting guide for new plugin devs:
+- **Bidirectional sync**: Push local changes to remote, pull remote changes to local
+- **Auto-sync**: Runs at a configurable interval (default 5 min). Also triggers automatically on vault file changes
+- **Conflict detection**: Accurately detects local and remote changes, even when both sides are edited
+- **Conflict resolution**: 6 strategies — keep_newer / keep_local / keep_remote / duplicate / 3-way merge / ask (manual)
+- **3-way merge**: For concurrent edits on text files (Markdown, etc.), automatically merges changes
+- **Exclude patterns**: Specify files/folders to exclude via glob patterns (`.obsidian/**` and `.trash/**` excluded by default)
+- **Status bar**: Real-time sync status display (Synced / Syncing... / Sync error / Not connected)
+- **Ribbon icon**: One-click manual sync
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## Backend setup
 
-## Releasing new releases
+See backend-specific setup instructions:
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+- **Google Drive**: [docs/google-drive.md](docs/google-drive.md)
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## Settings
 
-## Adding your plugin to the community plugin list
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Backend | Storage backend for sync | Google Drive |
+| Auto-sync interval | Sync interval in minutes (0 to disable) | 5 |
+| Conflict strategy | Resolution strategy for conflicts | keep_newer |
+| Enable 3-way merge | Enable 3-way merge for text files | Off |
+| Exclude patterns | Glob patterns to exclude (one per line) | `.trash/**` (`.obsidian/**` auto-added) |
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Conflict resolution strategies
 
-## How to use
+| Strategy | Behavior |
+|----------|----------|
+| `keep_newer` | Keeps the version with the more recent timestamp |
+| `keep_local` | Always keeps local changes |
+| `keep_remote` | Always keeps remote changes |
+| `duplicate` | Saves the remote version as a `.conflict` file, keeps local as-is |
+| `three_way_merge` | Attempts 3-way merge (text files only, up to 1 MB). Falls back on failure |
+| `ask` | Shows a modal for each conflict. Displays a summary modal for 5+ conflicts |
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Commands
 
-## Manually installing the plugin
+| Command | Description |
+|---------|-------------|
+| `Smart Sync: Sync now` | Run sync manually |
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+## Disclaimer
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+This plugin is provided "as is", without warranty of any kind. The authors are not responsible for any loss or corruption of data, or any other damages arising from the use of this plugin. **Use at your own risk.** It is strongly recommended that you back up your vault before using this plugin.
 
-## Funding URL
+## License
 
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
-
-If you have multiple URLs, you can also do:
-
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
-
-## API Documentation
-
-See https://docs.obsidian.md
+MIT
