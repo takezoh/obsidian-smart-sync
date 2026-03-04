@@ -310,6 +310,10 @@ OAuth client ID and secret are embedded as constants (no user configuration need
 
 PKCE `pendingCodeVerifier` and `pendingAuthState` are persisted in settings (allowing auth flow to survive plugin reloads).
 
+**Why a relay is needed**: Google OAuth requires redirect URIs to use `http://` or `https://` — custom schemes like `obsidian://` are not allowed for Web application OAuth clients. The relay page hosted on GitHub Pages receives the authorization code via HTTPS redirect, then forwards it to `obsidian://smart-sync-auth?code=...&state=...` to hand control back to the plugin.
+
+**Why the relay is safe**: The relay only forwards the authorization code — it cannot obtain tokens with it. PKCE (S256) ensures that the authorization code is useless without the `code_verifier`, which never leaves the user's device. The `state` parameter is verified against a locally stored value before processing, preventing CSRF attacks.
+
 ### DriveClient (`fs/googledrive/client.ts`)
 
 Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.

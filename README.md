@@ -21,7 +21,7 @@ Currently supports Google Drive as a storage backend.
 
 See backend-specific setup instructions:
 
-- **Google Drive**: [docs/google-drive.md](docs/google-drive.md)
+- **Google Drive**: [docs/google-drive-setup.md](docs/google-drive-setup.md)
 
 ## Settings
 
