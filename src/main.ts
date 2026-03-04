@@ -20,6 +20,7 @@ export default class SmartSyncPlugin extends Plugin {
 	private syncStatus: SyncStatus = "not_connected";
 	private autoSyncIntervalId: number | null = null;
 	private syncService!: SyncService;
+	private settingTab: SmartSyncSettingTab | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -54,7 +55,8 @@ export default class SmartSyncPlugin extends Plugin {
 			},
 		});
 
-		this.addSettingTab(new SmartSyncSettingTab(this.app, this));
+		this.settingTab = new SmartSyncSettingTab(this.app, this);
+		this.addSettingTab(this.settingTab);
 
 		// Handle OAuth callback via obsidian://smart-sync-auth?code=xxx&state=yyy
 		this.registerObsidianProtocolHandler("smart-sync-auth", (params) => {
@@ -62,6 +64,7 @@ export default class SmartSyncPlugin extends Plugin {
 				new Notice("Authorization failed: no code received");
 				return;
 			}
+			// Synthetic URL to pass code/state to completeAuth(), which expects a callback URL string
 			const url = `https://callback?code=${encodeURIComponent(params.code)}${params.state ? `&state=${encodeURIComponent(params.state)}` : ""}`;
 			void this.completeBackendConnect(url);
 		});
@@ -120,7 +123,9 @@ export default class SmartSyncPlugin extends Plugin {
 	}
 
 	onunload() {
-		void this.syncService.close();
+		this.syncService.close().catch((e) => {
+			console.error("Smart Sync: failed to close sync service", e);
+		});
 	}
 
 	async loadSettings() {
@@ -138,11 +143,7 @@ export default class SmartSyncPlugin extends Plugin {
 			needsSave = true;
 		}
 
-		// Ensure the vault config directory is always excluded
-		const configDir = this.app.vault.configDir;
-		const configPattern = `${configDir}/**`;
-		if (!this.settings.excludePatterns.includes(configPattern)) {
-			this.settings.excludePatterns.unshift(configPattern);
+		if (this.ensureConfigExcluded()) {
 			needsSave = true;
 		}
 
@@ -152,12 +153,18 @@ export default class SmartSyncPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		const configDir = this.app.vault.configDir;
-		const configPattern = `${configDir}/**`;
+		this.ensureConfigExcluded();
+		await this.saveData(this.settings);
+	}
+
+	/** Ensure the vault config directory is in excludePatterns. Returns true if it was added. */
+	private ensureConfigExcluded(): boolean {
+		const configPattern = `${this.app.vault.configDir}/**`;
 		if (!this.settings.excludePatterns.includes(configPattern)) {
 			this.settings.excludePatterns.unshift(configPattern);
+			return true;
 		}
-		await this.saveData(this.settings);
+		return false;
 	}
 
 	/** Set up or restart the auto-sync interval */
@@ -193,6 +200,10 @@ export default class SmartSyncPlugin extends Plugin {
 					this.syncStatus = "idle";
 					this.updateStatusBar();
 				}
+			} else {
+				this.remoteFs = null;
+				this.syncStatus = "not_connected";
+				this.updateStatusBar();
 			}
 		} catch (e) {
 			console.error("Smart Sync: failed to initialize backend", e);
@@ -210,7 +221,7 @@ export default class SmartSyncPlugin extends Plugin {
 			return;
 		}
 		try {
-			const updates = await this.backendProvider.startConnect(this.app, this.settings);
+			const updates = await this.backendProvider.auth.startAuth(this.app, this.settings);
 			Object.assign(this.settings, updates);
 			await this.saveSettings();
 		} catch (err) {
@@ -227,7 +238,7 @@ export default class SmartSyncPlugin extends Plugin {
 		}
 
 		try {
-			const updates = await this.backendProvider.completeConnect(
+			const updates = await this.backendProvider.auth.completeAuth(
 				code,
 				this.settings
 			);
@@ -250,25 +261,29 @@ export default class SmartSyncPlugin extends Plugin {
 			const msg = err instanceof Error ? err.message : String(err);
 			new Notice(`Authorization failed: ${msg}`);
 		}
+
+		this.settingTab?.display();
 	}
 
 	/** Disconnect the current backend */
 	async disconnectBackend(): Promise<void> {
 		if (!this.backendProvider) return;
 
-		const updates = await this.backendProvider.disconnect(this.settings);
+		const updates = await this.backendProvider.auth.disconnect(this.settings);
 		Object.assign(this.settings, updates);
 		await this.saveSettings();
 
 		this.remoteFs = null;
 		this.syncStatus = "not_connected";
 		this.updateStatusBar();
+
+		this.settingTab?.display();
 	}
 
 	async runSync(): Promise<void> {
-		if (!this.remoteFs) {
+		if (!this.localFs || !this.remoteFs) {
 			this.initBackend();
-			if (!this.remoteFs) {
+			if (!this.localFs || !this.remoteFs) {
 				this.syncStatus = "not_connected";
 				this.updateStatusBar();
 				new Notice("Not connected to a remote backend");
