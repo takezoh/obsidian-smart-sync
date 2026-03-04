@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
 import type { IBackendProvider } from "../backend";
 import type { IAuthProvider } from "../auth";
 import type { IFileSystem } from "../interface";
@@ -29,7 +29,13 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 			const pendingCodeVerifier = this.googleAuth.getCodeVerifier() ?? "";
 			const pendingAuthState = this.googleAuth.getAuthState() ?? "";
 
-			window.open(url);
+			if (Platform.isMobile) {
+				// window.open() is blocked in iOS WKWebView;
+				// assigning location.href lets Obsidian open the system browser.
+				window.location.href = url;
+			} else {
+				window.open(url);
+			}
 			new Notice(
 				"Complete authorization in your browser, then paste the code in settings"
 			);
