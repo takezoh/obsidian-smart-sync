@@ -30,3 +30,17 @@
 .smart-sync-summary-more {
 	font-style: italic;
 }
+
+/* Connection status indicators */
+.smart-sync-status-connected .setting-item-description {
+	color: var(--color-green);
+	font-weight: 500;
+}
+
+.smart-sync-status-partial .setting-item-description {
+	color: var(--color-yellow);
+}
+
+.smart-sync-status-disconnected .setting-item-description {
+	color: var(--text-muted);
+}

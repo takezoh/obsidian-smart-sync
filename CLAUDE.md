@@ -38,7 +38,7 @@ src/
 │   └── merge.ts         # threeWayMerge() — node-diff3
 ├── queue/async-queue.ts # AsyncMutex
 ├── utils/               # sha256(), matchGlob()
-├── ui/                  # SettingTab, ConflictModal, ConflictSummaryModal
+├── ui/                  # SettingTab, IBackendSettingsRenderer, ConflictModal, ConflictSummaryModal
 └── __mocks__/           # obsidian.ts, sync-test-helpers.ts
 ```
 

@@ -17,6 +17,7 @@ src/
 ├── fs/
 │   ├── types.ts                    # FileEntity, SyncRecord, MixedEntity, SyncDecision, DecisionType, ConflictStrategy
 │   ├── interface.ts                # IFileSystem interface
+│   ├── auth.ts                     # IAuthProvider interface
 │   ├── backend.ts                  # IBackendProvider interface
 │   ├── registry.ts                 # Backend registry (getBackendProvider, getAllBackendProviders)
 │   ├── local/
@@ -43,6 +44,8 @@ src/
 │   └── glob.ts                     # matchGlob() — glob pattern matching (regex conversion + cache)
 ├── ui/
 │   ├── settings.ts                 # SmartSyncSettingTab — settings tab UI
+│   ├── backend-settings.ts         # IBackendSettingsRenderer interface + renderer registry
+│   ├── googledrive-settings.ts     # GoogleDriveSettingsRenderer — Google Drive settings UI
 │   ├── conflict-modal.ts           # ConflictModal — individual conflict resolution modal
 │   └── conflict-summary-modal.ts   # ConflictSummaryModal — bulk conflict resolution modal
 └── __mocks__/
@@ -86,6 +89,7 @@ src/
 │  LocalFs         │  GoogleDriveFs                   │
 │  (Vault API)     │  (Drive REST API v3)             │
 │                  │  + DriveClient + GoogleAuth      │
+│                  │  + GoogleDriveAuthProvider       │
 └──────────────────┴──────────────────────────────────┘
 ```
 
@@ -215,25 +219,52 @@ interface IFileSystem {
 
 ---
 
+## IAuthProvider interface (`fs/auth.ts`)
+
+Authentication provider interface — abstracts OAuth/credential lifecycle separately from FS creation. This separation allows the UI to distinguish "authenticated" (tokens present) from "connected" (authenticated + fully configured, e.g. folder ID set).
+
+```typescript
+interface IAuthProvider {
+  isAuthenticated(settings: SmartSyncSettings): boolean;
+  startAuth(app: App, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
+  completeAuth(input: string, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
+  disconnect(settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
+}
+```
+
 ## IBackendProvider interface (`fs/backend.ts`)
 
-Provider interface for unified backend connection, authentication, and UI handling.
+Provider interface for backend FS creation and state management. Authentication is delegated to `IAuthProvider` via the `auth` property. Settings UI is **not** part of this interface — it is handled by `IBackendSettingsRenderer` in `ui/backend-settings.ts`.
 
 ```typescript
 interface IBackendProvider {
   readonly type: string;
   readonly displayName: string;
+  readonly auth: IAuthProvider;
   createFs(app: App, settings: SmartSyncSettings): IFileSystem | null;
   isConnected(settings: SmartSyncSettings): boolean;
-  startConnect(app: App, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings> | void>;
-  completeConnect(code: string, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
-  disconnect(settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
-  renderSettings(container: HTMLElement, settings: SmartSyncSettings, onSave: () => void, actions: BackendConnectionActions): void;
-  readFsState(fs: IFileSystem): Partial<SmartSyncSettings>;
+  readFsState?(fs: IFileSystem): Partial<SmartSyncSettings>;  // Optional — not all backends have internal state to persist
 }
 ```
 
-To add a backend: implement `IBackendProvider` in `fs/<backend>/provider.ts` and register it in `fs/registry.ts`.
+`readFsState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens) back to settings. `SyncService` checks existence before calling (`provider?.readFsState && ...`). Google Drive uses it to save `changesStartPageToken`; a simpler backend (e.g., local-only or S3) may not need it.
+
+## IBackendSettingsRenderer interface (`ui/backend-settings.ts`)
+
+Renders backend-specific settings UI (configuration fields + connection flow). Separated from `IBackendProvider` so that `fs/` has no Obsidian UI dependencies.
+
+```typescript
+interface IBackendSettingsRenderer {
+  readonly backendType: string;  // Must match IBackendProvider.type
+  render(containerEl: HTMLElement, settings: SmartSyncSettings, onSave: (updates) => Promise<void>, actions: BackendConnectionActions): void;
+}
+```
+
+`BackendConnectionActions` provides `startAuth()`, `completeAuth()`, `disconnect()`, and `refreshDisplay()` — injected by `SmartSyncSettingTab` to bridge UI actions to the plugin's auth lifecycle.
+
+Renderers are registered in `ui/backend-settings.ts` (same pattern as `fs/registry.ts`). `SmartSyncSettingTab` looks up the renderer via `getBackendSettingsRenderer(type)`.
+
+To add a backend: implement `IAuthProvider` + `IBackendProvider` in `fs/<backend>/provider.ts`, implement `IBackendSettingsRenderer` in `ui/<backend>-settings.ts`, and register both in their respective registries.
 
 ---
 
@@ -350,13 +381,26 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 
 ### GoogleDriveProvider (`fs/googledrive/provider.ts`)
 
-`IBackendProvider` implementation. Handles auth flow, settings UI, and FS instance creation.
+`IBackendProvider` implementation. Handles FS creation and state management. Authentication is delegated to `GoogleDriveAuthProvider` via composition (`this.auth`). Settings UI is handled separately by `GoogleDriveSettingsRenderer` in `ui/googledrive-settings.ts`.
 
-- `startConnect()`: Generate auth URL → open in browser → save PKCE state to settings
-- `completeConnect()`: Accept URL or code → exchange tokens directly with Google → save to settings
-- `disconnect()`: Clear tokens, folder ID, and page token. Returns `Promise` to support future token revocation via Google's revoke endpoint — if revocation fails, local tokens are still cleared to ensure the user can always disconnect
-- `renderSettings()`: UI for folder ID + connect/disconnect buttons
+- `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(settings)` to obtain a `GoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
 - `readFsState()`: Read `changesStartPageToken` from `GoogleDriveFs` and save to settings
+
+### GoogleDriveSettingsRenderer (`ui/googledrive-settings.ts`)
+
+`IBackendSettingsRenderer` implementation. Renders Google Drive-specific settings: folder ID input, connection status indicator, and auth code flow.
+
+Connection state is derived directly from settings fields (`!!refreshToken`, `!!driveFolderId`) — no dependency on the provider instance. Button text and auth code input visibility are driven by `isAuthenticated` (token present) rather than `isConnected` (token + folder ID), so the UI correctly reflects the authenticated state before folder ID is configured. Folder ID changes trigger `refreshDisplay()` after save to keep the status indicator in sync.
+
+### GoogleDriveAuthProvider (`fs/googledrive/provider.ts`)
+
+`IAuthProvider` implementation. Owns the `GoogleAuth` instance and manages the entire OAuth lifecycle.
+
+- `startAuth()`: Generate auth URL → open in browser → save PKCE state to settings
+- `completeAuth()`: Accept URL or code → exchange tokens directly with Google → save to settings
+- `disconnect()`: Revoke token via Google's revoke endpoint (best-effort) → clear tokens and page token. If revocation fails, local tokens are still cleared to ensure the user can always disconnect
+- `isAuthenticated()`: Returns `true` when `refreshToken` is present (even without folder ID)
+- `getOrCreateGoogleAuth()`: Returns the existing `GoogleAuth` instance, or creates a new one if the stored `refreshToken` has changed. Called by `GoogleDriveProvider.createFs()` to obtain the auth instance for `DriveClient`
 
 ---
 
@@ -449,7 +493,7 @@ Settings tab displaying:
 4. 3-way merge toggle
 5. Exclude patterns (textarea, one pattern per line)
 6. Mobile sync settings (include patterns + max file size)
-7. Backend-specific settings (delegated to `provider.renderSettings()`)
+7. Backend-specific settings (delegated to `IBackendSettingsRenderer` via renderer registry)
 
 ### ConflictModal (`ui/conflict-modal.ts`)
 

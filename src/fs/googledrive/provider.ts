@@ -1,5 +1,7 @@
-import { App, Notice, Setting, TextComponent, debounce } from "obsidian";
-import type { BackendConnectionActions, IBackendProvider } from "../backend";
+import type { App } from "obsidian";
+import { Notice } from "obsidian";
+import type { IBackendProvider } from "../backend";
+import type { IAuthProvider } from "../auth";
 import type { IFileSystem } from "../interface";
 import type { SmartSyncSettings } from "../../settings";
 import { GoogleAuth } from "./auth";
@@ -7,49 +9,25 @@ import { DriveClient } from "./client";
 import { GoogleDriveFs } from "./index";
 
 /**
- * Google Drive backend provider.
- * Encapsulates all Google Drive-specific logic: OAuth, client creation,
- * settings UI. main.ts interacts only via IBackendProvider.
+ * Google Drive authentication provider.
+ * Owns the GoogleAuth instance and manages the OAuth lifecycle.
  */
-export class GoogleDriveProvider implements IBackendProvider {
-	readonly type = "googledrive";
-	readonly displayName = "Google Drive";
+export class GoogleDriveAuthProvider implements IAuthProvider {
+	private googleAuth: GoogleAuth | null = null;
 
-	private auth: GoogleAuth | null = null;
-
-	createFs(_app: App, settings: SmartSyncSettings): IFileSystem | null {
-		if (!settings.refreshToken || !settings.driveFolderId) return null;
-
-		const auth = this.getOrCreateAuth(settings);
-		auth.setTokens(
-			settings.refreshToken,
-			settings.accessToken,
-			settings.accessTokenExpiry
-		);
-		const client = new DriveClient(auth);
-		const fs = new GoogleDriveFs(client, settings.driveFolderId);
-
-		// Restore the changes page token for incremental sync
-		if (settings.changesStartPageToken) {
-			fs.changesPageToken = settings.changesStartPageToken;
-		}
-
-		return fs;
+	isAuthenticated(settings: SmartSyncSettings): boolean {
+		return !!settings.refreshToken;
 	}
 
-	isConnected(settings: SmartSyncSettings): boolean {
-		return !!settings.refreshToken && !!settings.driveFolderId;
-	}
-
-	async startConnect(_app: App, _settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>> {
+	async startAuth(_app: App, _settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>> {
 		try {
-			this.auth = new GoogleAuth();
+			this.googleAuth = new GoogleAuth();
 
-			const url = await this.auth.getAuthorizationUrl();
+			const url = await this.googleAuth.getAuthorizationUrl();
 
 			// Persist PKCE state so it survives plugin reload
-			const pendingCodeVerifier = this.auth.getCodeVerifier() ?? "";
-			const pendingAuthState = this.auth.getAuthState() ?? "";
+			const pendingCodeVerifier = this.googleAuth.getCodeVerifier() ?? "";
+			const pendingAuthState = this.googleAuth.getAuthState() ?? "";
 
 			window.open(url);
 			new Notice(
@@ -64,22 +42,22 @@ export class GoogleDriveProvider implements IBackendProvider {
 		}
 	}
 
-	async completeConnect(
+	async completeAuth(
 		input: string,
 		settings: SmartSyncSettings
 	): Promise<Partial<SmartSyncSettings>> {
-		if (!this.auth) {
-			this.auth = new GoogleAuth();
+		if (!this.googleAuth) {
+			this.googleAuth = new GoogleAuth();
 		}
 		// Always restore PKCE state if auth lacks it (survives plugin reload)
-		if (!this.auth.getAuthState() && settings.pendingCodeVerifier && settings.pendingAuthState) {
-			this.auth.setPkceState(settings.pendingCodeVerifier, settings.pendingAuthState);
+		if (!this.googleAuth.getAuthState() && settings.pendingCodeVerifier && settings.pendingAuthState) {
+			this.googleAuth.setPkceState(settings.pendingCodeVerifier, settings.pendingAuthState);
 		}
 
 		// Parse input: may be a bare code or a full callback URL containing code + state
 		const { code, state } = parseAuthInput(input);
-		await this.auth.exchangeCode(code, state);
-		const tokens = this.auth.getTokenState();
+		await this.googleAuth.exchangeCode(code, state);
+		const tokens = this.googleAuth.getTokenState();
 		return {
 			refreshToken: tokens.refreshToken,
 			accessToken: tokens.accessToken,
@@ -89,17 +67,11 @@ export class GoogleDriveProvider implements IBackendProvider {
 		};
 	}
 
-	readFsState(fs: IFileSystem): Partial<SmartSyncSettings> {
-		if (!(fs instanceof GoogleDriveFs)) return {};
-		const token = fs.changesPageToken;
-		return token ? { changesStartPageToken: token } : {};
-	}
-
 	async disconnect(_settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>> {
-		if (this.auth) {
-			await this.auth.revokeToken();
+		if (this.googleAuth) {
+			await this.googleAuth.revokeToken();
 		}
-		this.auth = null;
+		this.googleAuth = null;
 		return {
 			refreshToken: "",
 			accessToken: "",
@@ -110,101 +82,64 @@ export class GoogleDriveProvider implements IBackendProvider {
 		};
 	}
 
-	renderSettings(
-		containerEl: HTMLElement,
-		settings: SmartSyncSettings,
-		onSave: (updates: Partial<SmartSyncSettings>) => Promise<void>,
-		actions: BackendConnectionActions
-	): void {
-		const debouncedSave = debounce(
-			(updates: Partial<SmartSyncSettings>) => {
-				onSave(updates).catch((err) => {
-					console.error("Smart Sync: failed to save settings", err);
-					new Notice("Failed to save settings. Please try again.");
-				});
-			},
-			1000,
-			true
-		);
-
-		new Setting(containerEl)
-			.setName("Google Drive folder ID")
-			.setDesc(
-				"The ID of the Google Drive folder to sync with. Found in the folder's URL."
-			)
-			.addText((text) =>
-				text
-					// eslint-disable-next-line obsidianmd/ui/sentence-case
-					.setPlaceholder("e.g. 1AbCdEfGhIjKlMnOpQrStUvWxYz")
-					.setValue(settings.driveFolderId)
-					.onChange((value) => {
-						debouncedSave({ driveFolderId: value });
-					})
-			);
-
-		// Connection status + connect/disconnect
-		const connected = this.isConnected(settings);
-		const authorized = !!settings.refreshToken;
-		const statusDesc = connected
-			? "Connected"
-			: authorized
-				? "Authorized (folder ID required)"
-				: "Not connected";
-		new Setting(containerEl)
-			.setName("Connection status")
-			.setDesc(statusDesc)
-			.addButton((button) =>
-				button
-					.setButtonText(
-						connected ? "Disconnect" : "Connect to Google Drive"
-					)
-					.onClick(async () => {
-						if (connected) {
-							await actions.disconnect();
-						} else {
-							await actions.startConnect();
-						}
-						actions.refreshDisplay();
-					})
-			);
-
-		// Auth code input (only when not connected)
-		if (!connected) {
-			let authCodeInput: TextComponent;
-			new Setting(containerEl)
-				.setName("Authorization code")
-				.setDesc(
-					"After authorizing in your browser, paste the callback URL or authorization code here. " +
-					"On mobile, copy the URL from the browser after granting access and paste it here."
-				)
-				.addText((text) => {
-					authCodeInput = text.setPlaceholder("Paste callback URL or code here");
-				})
-				.addButton((button) =>
-					button.setButtonText("Submit").onClick(async () => {
-						const value = authCodeInput.getValue().trim();
-						if (value) {
-							try {
-								await actions.completeConnect(value);
-							} catch (err) {
-								const msg = err instanceof Error ? err.message : String(err);
-								new Notice(`Authorization failed: ${msg}`);
-							}
-							actions.refreshDisplay();
-						}
-					})
-				);
+	/**
+	 * Get or create a GoogleAuth instance for FS creation.
+	 * Re-creates if the stored refreshToken has changed.
+	 */
+	getOrCreateGoogleAuth(settings: SmartSyncSettings): GoogleAuth {
+		if (
+			!this.googleAuth ||
+			this.googleAuth.getTokenState().refreshToken !== settings.refreshToken
+		) {
+			this.googleAuth = new GoogleAuth();
 		}
+		return this.googleAuth;
+	}
+}
+
+/**
+ * Google Drive backend provider.
+ * Encapsulates Google Drive-specific logic: FS creation and state management.
+ * Authentication is delegated to GoogleDriveAuthProvider.
+ * Settings UI is handled by GoogleDriveSettingsRenderer in src/ui/.
+ */
+export class GoogleDriveProvider implements IBackendProvider {
+	readonly type = "googledrive";
+	readonly displayName = "Google Drive";
+	readonly auth: GoogleDriveAuthProvider;
+
+	constructor() {
+		this.auth = new GoogleDriveAuthProvider();
 	}
 
-	private getOrCreateAuth(settings: SmartSyncSettings): GoogleAuth {
-		if (
-			!this.auth ||
-			this.auth.getTokenState().refreshToken !== settings.refreshToken
-		) {
-			this.auth = new GoogleAuth();
+	createFs(_app: App, settings: SmartSyncSettings): IFileSystem | null {
+		if (!settings.refreshToken || !settings.driveFolderId) return null;
+
+		const googleAuth = this.auth.getOrCreateGoogleAuth(settings);
+		googleAuth.setTokens(
+			settings.refreshToken,
+			settings.accessToken,
+			settings.accessTokenExpiry
+		);
+		const client = new DriveClient(googleAuth);
+		const fs = new GoogleDriveFs(client, settings.driveFolderId);
+
+		// Restore the changes page token for incremental sync
+		if (settings.changesStartPageToken) {
+			fs.changesPageToken = settings.changesStartPageToken;
 		}
-		return this.auth;
+
+		return fs;
+	}
+
+	isConnected(settings: SmartSyncSettings): boolean {
+		return !!settings.refreshToken && !!settings.driveFolderId;
+	}
+
+	readFsState(fs: IFileSystem): Partial<SmartSyncSettings> {
+		if (!(fs instanceof GoogleDriveFs)) return {};
+		const token = fs.changesPageToken;
+		return token ? { changesStartPageToken: token } : {};
 	}
 }
 

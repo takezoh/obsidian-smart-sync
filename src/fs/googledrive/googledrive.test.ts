@@ -24,10 +24,9 @@ interface GoogleDriveFsInternal {
 	initialized: boolean;
 }
 
-/** Type for accessing private fields on GoogleDriveProvider in tests */
-interface GoogleDriveProviderInternal {
-	auth: GoogleAuth;
-	getOrCreateAuth: (settings: unknown) => GoogleAuth;
+/** Type for accessing private fields on GoogleDriveAuthProvider in tests */
+interface GoogleDriveAuthProviderInternal {
+	googleAuth: GoogleAuth;
 }
 
 // ---- L10: Runtime validator tests ----
@@ -133,7 +132,7 @@ describe("parseAuthInput (via provider)", () => {
 		const provider = new GoogleDriveProvider();
 
 		await expect(
-			provider.completeConnect("", {} as never)
+			provider.auth.completeAuth("", {} as never)
 		).rejects.toThrow("Authorization code is empty");
 	});
 
@@ -142,7 +141,7 @@ describe("parseAuthInput (via provider)", () => {
 		const provider = new GoogleDriveProvider();
 
 		await expect(
-			provider.completeConnect("   ", {} as never)
+			provider.auth.completeAuth("   ", {} as never)
 		).rejects.toThrow("Authorization code is empty");
 	});
 });
@@ -289,7 +288,7 @@ describe("GoogleAuth.exchangeCode state validation", () => {
 	});
 });
 
-describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
+describe("GoogleDriveProvider.completeAuth PKCE restoration", () => {
 	it("restores PKCE state on existing auth that lacks it", async () => {
 		const mockRequestUrl = (await spyRequestUrl()).mockResolvedValue(mockRes({
 			access_token: "new-access",
@@ -301,7 +300,7 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 		const { GoogleDriveProvider } = await import("./provider");
 		const { GoogleAuth } = await import("./auth");
 		const provider = new GoogleDriveProvider();
-		const internal = provider as unknown as GoogleDriveProviderInternal;
+		const authInternal = provider.auth as unknown as GoogleDriveAuthProviderInternal;
 
 		const settings = {
 			pendingCodeVerifier: "saved-verifier",
@@ -309,13 +308,13 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 		} as never;
 
 		// Create a provider with an existing auth that has no PKCE state
-		internal.auth = new GoogleAuth();
+		authInternal.googleAuth = new GoogleAuth();
 
 		// Verify auth initially has no PKCE state
-		expect(internal.auth.getAuthState()).toBeNull();
+		expect(authInternal.googleAuth.getAuthState()).toBeNull();
 
-		// completeConnect should restore PKCE state from settings then exchange
-		const result = await provider.completeConnect(
+		// completeAuth should restore PKCE state from settings then exchange
+		const result = await provider.auth.completeAuth(
 			"http://127.0.0.1/callback?code=test-code&state=saved-state",
 			settings
 		);
@@ -323,7 +322,7 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 		// exchangeCode should have succeeded (state matched after restoration)
 		expect(result.refreshToken).toBe("new-refresh");
 		// State is cleared after successful exchange
-		expect(internal.auth.getAuthState()).toBeNull();
+		expect(authInternal.googleAuth.getAuthState()).toBeNull();
 
 		mockRequestUrl.mockRestore();
 	});
@@ -331,17 +330,17 @@ describe("GoogleDriveProvider.completeConnect PKCE restoration", () => {
 
 // ---- Issue 2: getOrCreateAuth refreshToken comparison ----
 
-describe("GoogleDriveProvider.getOrCreateAuth", () => {
+describe("GoogleDriveAuthProvider.getOrCreateGoogleAuth", () => {
 	it("recreates auth when refreshToken changes", async () => {
 		const { GoogleDriveProvider } = await import("./provider");
 		const { GoogleAuth } = await import("./auth");
 		const provider = new GoogleDriveProvider();
-		const internal = provider as unknown as GoogleDriveProviderInternal;
+		const authInternal = provider.auth as unknown as GoogleDriveAuthProviderInternal;
 
 		// Set up existing auth with old refresh token
 		const oldAuth = new GoogleAuth();
 		oldAuth.setTokens("old-refresh", "", 0);
-		internal.auth = oldAuth;
+		authInternal.googleAuth = oldAuth;
 
 		const settings = {
 			refreshToken: "new-refresh",
@@ -352,7 +351,7 @@ describe("GoogleDriveProvider.getOrCreateAuth", () => {
 		} as never;
 
 		// The refreshToken mismatch should create a new auth instance
-		const auth = internal.getOrCreateAuth(settings);
+		const auth = provider.auth.getOrCreateGoogleAuth(settings);
 		expect(auth).not.toBe(oldAuth);
 	});
 });

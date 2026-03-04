@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type SmartSyncPlugin from "../main";
 import type { ConflictStrategy } from "../fs/types";
 import { getAllBackendProviders, getBackendProvider } from "../fs/registry";
+import { getBackendSettingsRenderer } from "./backend-settings";
 
 export class SmartSyncSettingTab extends PluginSettingTab {
 	plugin: SmartSyncPlugin;
@@ -160,23 +161,26 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 		const provider = getBackendProvider(
 			this.plugin.settings.backendType
 		);
-		if (!provider) return;
+		const renderer = getBackendSettingsRenderer(
+			this.plugin.settings.backendType
+		);
+		if (!renderer) return;
 
 		new Setting(containerEl)
-			.setName(`${provider.displayName} connection`)
+			.setName(`${provider?.displayName ?? "Backend"} connection`)
 			.setHeading();
 
-		// Delegate all backend UI to the provider (config fields + connection flow)
-		provider.renderSettings(
+		renderer.render(
 			containerEl,
 			this.plugin.settings,
 			async (updates) => {
 				Object.assign(this.plugin.settings, updates);
 				await this.plugin.saveSettings();
+				this.plugin.initBackend();
 			},
 			{
-				startConnect: () => this.plugin.startBackendConnect(),
-				completeConnect: (code: string) =>
+				startAuth: () => this.plugin.startBackendConnect(),
+				completeAuth: (code: string) =>
 					this.plugin.completeBackendConnect(code),
 				disconnect: () => this.plugin.disconnectBackend(),
 				refreshDisplay: () => this.display(),
