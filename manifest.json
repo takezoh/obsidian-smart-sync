@@ -3,8 +3,8 @@
 	"name": "Smart Sync",
 	"version": "0.1.0",
 	"minAppVersion": "1.5.7",
-	"description": "Bidirectional sync between your Obsidian vault and cloud storage backends.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"description": "Sync your Obsidian vault bidirectionally with cloud storage backends.",
+	"author": "Takehito Gondo",
+	"authorUrl": "https://github.com/takezoh",
 	"isDesktopOnly": false
 }

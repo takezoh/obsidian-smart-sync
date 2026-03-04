@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-smart-sync",
 	"version": "0.1.0",
-	"description": "Bidirectional sync between your Obsidian vault and cloud storage backends.",
+	"description": "Sync your Obsidian vault bidirectionally with cloud storage backends.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
