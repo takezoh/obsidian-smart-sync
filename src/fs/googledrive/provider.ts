@@ -89,6 +89,11 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 		};
 	}
 
+	/** Return the current in-memory token state (for persistence after refresh). */
+	getTokenState(): { refreshToken: string; accessToken: string; accessTokenExpiry: number } | null {
+		return this.googleAuth?.getTokenState() ?? null;
+	}
+
 	/**
 	 * Get or create a GoogleAuth instance for FS creation.
 	 * Re-creates if the stored refreshToken has changed.
@@ -145,8 +150,20 @@ export class GoogleDriveProvider implements IBackendProvider {
 
 	readFsState(fs: IFileSystem): Partial<SmartSyncSettings> {
 		if (!(fs instanceof GoogleDriveFs)) return {};
-		const token = fs.changesPageToken;
-		return token ? { changesStartPageToken: token } : {};
+		const result: Partial<SmartSyncSettings> = {};
+
+		const pageToken = fs.changesPageToken;
+		if (pageToken) result.changesStartPageToken = pageToken;
+
+		// Persist refreshed tokens so they survive plugin/app restarts
+		const tokens = this.auth.getTokenState();
+		if (tokens && tokens.refreshToken) {
+			result.refreshToken = tokens.refreshToken;
+			result.accessToken = tokens.accessToken;
+			result.accessTokenExpiry = tokens.accessTokenExpiry;
+		}
+
+		return result;
 	}
 }
 
