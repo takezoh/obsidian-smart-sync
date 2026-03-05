@@ -8,6 +8,8 @@ import { getBackendProvider } from "./fs/registry";
 import { SyncService, SyncStatus } from "./sync/service";
 import { ConflictModal } from "./ui/conflict-modal";
 import { ConflictSummaryModal, summaryChoiceToStrategy } from "./ui/conflict-summary-modal";
+import { Logger } from "./logging/logger";
+import type { LoggerAdapter } from "./logging/logger";
 
 const DEBOUNCE_MS = 5000;
 
@@ -21,11 +23,18 @@ export default class SmartSyncPlugin extends Plugin {
 	private autoSyncIntervalId: number | null = null;
 	private syncService!: SyncService;
 	private settingTab: SmartSyncSettingTab | null = null;
+	private logger!: Logger;
 
 	async onload() {
 		await this.loadSettings();
 
 		this.localFs = new LocalFs(this.app);
+
+		this.logger = new Logger(
+			this.app.vault.adapter as unknown as LoggerAdapter,
+			() => this.settings,
+			Platform.isMobile,
+		);
 
 		this.syncService = new SyncService({
 			getSettings: () => this.settings,
@@ -53,6 +62,7 @@ export default class SmartSyncPlugin extends Plugin {
 				const choice = await modal.waitForChoice();
 				return summaryChoiceToStrategy(choice);
 			},
+			logger: this.logger,
 		});
 
 		this.settingTab = new SmartSyncSettingTab(this.app, this);
@@ -132,6 +142,8 @@ export default class SmartSyncPlugin extends Plugin {
 	}
 
 	onunload() {
+		void this.logger.flush();
+		this.logger.dispose();
 		this.syncService.close().catch((e) => {
 			console.error("Smart Sync: failed to close sync service", e);
 		});

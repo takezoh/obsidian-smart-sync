@@ -19,6 +19,8 @@ function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSett
 		refreshToken: "",
 		accessToken: "",
 		accessTokenExpiry: 0,
+		enableLogging: false,
+		logLevel: "info",
 		changesStartPageToken: "",
 		pendingCodeVerifier: "",
 		pendingAuthState: "",

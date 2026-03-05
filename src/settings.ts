@@ -18,6 +18,11 @@ export interface SmartSyncSettings {
 	/** Maximum file size in MB to sync on mobile */
 	mobileMaxFileSizeMB: number;
 
+	/** Write sync logs to .smartsync/{device}/{date}.log */
+	enableLogging: boolean;
+	/** Minimum log level to write */
+	logLevel: "debug" | "info" | "warn" | "error";
+
 	// --- Google Drive backend fields ---
 	// These live at the top level for simplicity. Each backend reads
 	// only the fields it needs; unknown fields are ignored.
@@ -46,6 +51,8 @@ export const DEFAULT_SETTINGS: SmartSyncSettings = {
 	enableThreeWayMerge: false,
 	mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
 	mobileMaxFileSizeMB: 10,
+	enableLogging: false,
+	logLevel: "info",
 	driveFolderId: "",
 	refreshToken: "",
 	accessToken: "",

@@ -157,6 +157,42 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// --- Logging settings ---
+		new Setting(containerEl).setName("Logging").setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable logging")
+			.setDesc(
+				"Write sync logs to .smartsync/ in your vault for debugging."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableLogging)
+					.onChange(async (value) => {
+						this.plugin.settings.enableLogging = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Log level")
+			.setDesc(
+				"Minimum level of messages to log."
+			)
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("debug", "Debug")
+					.addOption("info", "Info")
+					.addOption("warn", "Warn")
+					.addOption("error", "Error")
+					.setValue(this.plugin.settings.logLevel)
+					.onChange(async (value) => {
+						this.plugin.settings.logLevel =
+							value as "debug" | "info" | "warn" | "error";
+						await this.plugin.saveSettings();
+					})
+			);
+
 		// --- Backend-specific settings (config + connection flow) ---
 		const provider = getBackendProvider(
 			this.plugin.settings.backendType

@@ -8,6 +8,7 @@ import { sha256 } from "../utils/hash";
 import { SyncStateStore } from "./state";
 import { buildMixedEntities, computeDecisions } from "./engine";
 import { SyncExecutor, SyncProgress, SyncResult } from "./executor";
+import type { Logger } from "../logging/logger";
 
 export type SyncStatus = "idle" | "syncing" | "error" | "partial_error" | "not_connected";
 const MAX_RETRIES = 3;
@@ -33,6 +34,7 @@ export interface SyncServiceDeps {
 	resolveConflictBatch: (conflicts: SyncDecision[]) => Promise<ConflictStrategy | null>;
 	/** Returns true when running on mobile (used for mobile sync restrictions) */
 	isMobile: () => boolean;
+	logger?: Logger;
 }
 
 /**
@@ -99,6 +101,7 @@ export class SyncService {
 			do {
 				this.syncPending = false;
 				this.deps.onStatusChange("syncing");
+				this.deps.logger?.info("Sync started");
 
 				let lastError: unknown = null;
 				let lastResult: SyncResult | null = null;
@@ -112,6 +115,10 @@ export class SyncService {
 						lastError = err;
 						const { status, retryAfter } = getErrorInfo(err);
 						console.error("Smart Sync: sync error", { status, err });
+						this.deps.logger?.error(
+							`Sync error (attempt ${attempt}/${MAX_RETRIES})`,
+							{ status, message: err instanceof Error ? err.message : String(err) },
+						);
 
 						// Non-retryable errors: abort immediately
 						if (status === 401) {
@@ -158,15 +165,29 @@ export class SyncService {
 						"Smart Sync error after retries:",
 						lastError
 					);
+					this.deps.logger?.error("Sync failed after retries", { message: msg });
+					await this.deps.logger?.flush();
 					return;
 				}
 
 				// Set status based on result
 				if (lastResult && lastResult.errors.length > 0) {
 					this.deps.onStatusChange("partial_error");
+					this.deps.logger?.warn("Sync completed with errors", {
+						pushed: lastResult.pushed,
+						pulled: lastResult.pulled,
+						conflicts: lastResult.conflicts,
+						errors: lastResult.errors.length,
+					});
 				} else {
 					this.deps.onStatusChange("idle");
+					this.deps.logger?.info("Sync completed", {
+						pushed: lastResult?.pushed ?? 0,
+						pulled: lastResult?.pulled ?? 0,
+						conflicts: lastResult?.conflicts ?? 0,
+					});
 				}
+				await this.deps.logger?.flush();
 			} while (this.syncPending);
 		});
 	}
@@ -269,6 +290,9 @@ export class SyncService {
 				"Smart Sync: files with conflict markers:",
 				result.mergeConflictPaths
 			);
+			this.deps.logger?.warn("Files with conflict markers", {
+				paths: result.mergeConflictPaths,
+			});
 		}
 
 		if (parts.length === 0) {
@@ -285,6 +309,7 @@ export class SyncService {
 			if (more > 0) errorMsg += `\n...and ${more} more`;
 			this.deps.notify(errorMsg, 10000);
 			console.error("Smart Sync errors:", result.errors);
+			this.deps.logger?.error("Per-file sync errors", { errors: result.errors });
 			// Per-file errors are reported via notify + partial_error status.
 			// Transport errors (network, 5xx) throw from the FS layer directly
 			// and are handled by the retry loop in runSync().
