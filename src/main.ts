@@ -8,7 +8,7 @@ import { getBackendProvider } from "./fs/registry";
 import { SyncService, SyncStatus } from "./sync/service";
 import { ConflictModal } from "./ui/conflict-modal";
 import { ConflictSummaryModal, summaryChoiceToStrategy } from "./ui/conflict-summary-modal";
-import { Logger } from "./logging/logger";
+import { Logger, getDeviceName } from "./logging/logger";
 import type { LoggerAdapter } from "./logging/logger";
 
 const DEBOUNCE_MS = 5000;
@@ -33,7 +33,7 @@ export default class SmartSyncPlugin extends Plugin {
 		this.logger = new Logger(
 			this.app.vault.adapter as unknown as LoggerAdapter,
 			() => this.settings,
-			Platform.isMobile,
+			getDeviceName(Platform.isMobile, this.settings.vaultId),
 		);
 
 		this.syncService = new SyncService({

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Logger, LoggerAdapter } from "./logger";
+import { Logger, LoggerAdapter, getDeviceName } from "./logger";
 import type { SmartSyncSettings } from "../settings";
 import { DEFAULT_SETTINGS } from "../settings";
 
@@ -35,7 +35,7 @@ describe("Logger", () => {
 	beforeEach(() => {
 		adapter = createMockAdapter();
 		settings = createSettings();
-		logger = new Logger(adapter, () => settings, false);
+		logger = new Logger(adapter, () => settings, "desktop");
 	});
 
 	afterEach(() => {
@@ -64,14 +64,34 @@ describe("Logger", () => {
 		expect(content).toContain('[ERROR] fail {"status":401}');
 	});
 
-	it("uses mobile device name when isMobile is true", async () => {
+	it("uses provided device name for log directory", async () => {
 		logger.dispose();
-		logger = new Logger(adapter, () => settings, true);
+		logger = new Logger(adapter, () => settings, "My iPhone");
 		logger.info("mobile log");
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/mobile/");
+		expect(files[0]).toContain(".smartsync/my-iphone/");
+	});
+
+	it("sanitizes unsafe characters in device name", async () => {
+		logger.dispose();
+		logger = new Logger(adapter, () => settings, "PC/Work:Station\\1");
+		logger.info("test");
+		await logger.flush();
+
+		const files = Array.from(adapter.written.keys());
+		expect(files[0]).toContain(".smartsync/pc-work-station-1/");
+	});
+
+	it("falls back to 'unknown' for empty device name", async () => {
+		logger.dispose();
+		logger = new Logger(adapter, () => settings, "");
+		logger.info("test");
+		await logger.flush();
+
+		const files = Array.from(adapter.written.keys());
+		expect(files[0]).toContain(".smartsync/unknown/");
 	});
 
 	it("filters logs below configured level", async () => {
@@ -118,6 +138,20 @@ describe("Logger", () => {
 
 		expect(adapter.dirs.has(".smartsync")).toBe(true);
 		expect(adapter.dirs.has(".smartsync/desktop")).toBe(true);
+	});
+
+	it("getDeviceName returns 'mobile-{vaultId}' on mobile with vaultId", () => {
+		expect(getDeviceName(true, "abc123")).toBe("mobile-abc123");
+	});
+
+	it("getDeviceName returns 'mobile' on mobile without vaultId", () => {
+		expect(getDeviceName(true)).toBe("mobile");
+	});
+
+	it("getDeviceName returns hostname on desktop", () => {
+		const name = getDeviceName(false);
+		expect(name).toBeTruthy();
+		expect(name).not.toBe("mobile");
 	});
 
 	it("formats timestamp in ISO format", async () => {

@@ -16,6 +16,36 @@ export interface LoggerAdapter {
 	mkdir(path: string): Promise<void>;
 }
 
+/**
+ * Sanitize a device name for use as a directory name.
+ * Replaces characters that are unsafe in file paths with hyphens,
+ * collapses runs, trims, lowercases, and falls back to "unknown".
+ */
+function sanitizeDeviceName(name: string): string {
+	const sanitized = name
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+	return sanitized || "unknown";
+}
+
+/**
+ * Detect a device name for the current platform.
+ * On desktop (Electron) this returns the OS hostname.
+ * On mobile it returns "mobile-{vaultId}".
+ */
+export function getDeviceName(isMobile: boolean, vaultId?: string): string {
+	if (isMobile) return vaultId ? `mobile-${vaultId}` : "mobile";
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const os = require("os") as { hostname: () => string };
+		return os.hostname();
+	} catch {
+		return "desktop";
+	}
+}
+
 export class Logger {
 	private buffer: string[] = [];
 	private deviceName: string;
@@ -26,11 +56,11 @@ export class Logger {
 	constructor(
 		adapter: LoggerAdapter,
 		getSettings: () => SmartSyncSettings,
-		isMobile: boolean,
+		deviceName: string,
 	) {
 		this.adapter = adapter;
 		this.getSettings = getSettings;
-		this.deviceName = isMobile ? "mobile" : "desktop";
+		this.deviceName = sanitizeDeviceName(deviceName);
 		this.flushTimer = setInterval(() => {
 			void this.flush();
 		}, 30_000);
