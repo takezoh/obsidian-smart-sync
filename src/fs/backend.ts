@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import type { IFileSystem } from "./interface";
 import type { IAuthProvider } from "./auth";
 import type { SmartSyncSettings } from "../settings";
+import type { Logger } from "../logging/logger";
 
 /**
  * Abstraction for a remote storage backend.
@@ -20,7 +21,7 @@ export interface IBackendProvider {
 	 * Create an IFileSystem from current settings.
 	 * Returns null if the backend is not fully configured.
 	 */
-	createFs(app: App, settings: SmartSyncSettings): IFileSystem | null;
+	createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
 
 	/** Whether credentials are present and the backend is ready to sync */
 	isConnected(settings: SmartSyncSettings): boolean;

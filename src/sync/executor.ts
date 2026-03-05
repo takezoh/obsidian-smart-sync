@@ -1,6 +1,7 @@
 import type { IFileSystem } from "../fs/interface";
 import type { ConflictStrategy, FileEntity, SyncDecision, SyncRecord } from "../fs/types";
 import type { SyncStateStore } from "./state";
+import type { Logger } from "../logging/logger";
 import { resolveConflict, buildSyncRecord } from "./conflict";
 import { isMergeEligible } from "./merge";
 
@@ -35,6 +36,7 @@ export class SyncExecutor {
 	private enableThreeWayMerge: boolean;
 	private onProgress?: OnProgress;
 	private onConflict?: OnConflict;
+	private logger?: Logger;
 
 	constructor(options: {
 		localFs: IFileSystem;
@@ -44,6 +46,7 @@ export class SyncExecutor {
 		enableThreeWayMerge: boolean;
 		onProgress?: OnProgress;
 		onConflict?: OnConflict;
+		logger?: Logger;
 	}) {
 		if (options.defaultStrategy === "ask" && !options.onConflict) {
 			throw new Error(
@@ -57,12 +60,20 @@ export class SyncExecutor {
 		this.enableThreeWayMerge = options.enableThreeWayMerge;
 		this.onProgress = options.onProgress;
 		this.onConflict = options.onConflict;
+		this.logger = options.logger;
 	}
 
 	async execute(decisions: SyncDecision[]): Promise<SyncResult> {
 		const actionable = decisions.filter(
 			(d) => d.decision !== "no_action"
 		);
+
+		const breakdown: Record<string, number> = {};
+		for (const d of actionable) {
+			breakdown[d.decision] = (breakdown[d.decision] ?? 0) + 1;
+		}
+		this.logger?.info("Executing sync decisions", { total: actionable.length, breakdown });
+
 		const result: SyncResult = {
 			pushed: 0,
 			pulled: 0,
@@ -84,6 +95,7 @@ export class SyncExecutor {
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				result.errors.push(`${decision.path}: ${msg}`);
+				this.logger?.error("File sync failed", { path: decision.path, decision: decision.decision, error: msg });
 			}
 		}
 
@@ -197,7 +209,8 @@ export class SyncExecutor {
 					decision.remote,
 					decision.prevSync,
 					this.stateStore,
-					getFallback
+					getFallback,
+					this.logger
 				);
 
 				// Track paths with unresolved merge conflicts
@@ -211,7 +224,8 @@ export class SyncExecutor {
 					this.localFs,
 					this.remoteFs,
 					this.enableThreeWayMerge,
-					this.stateStore
+					this.stateStore,
+					this.logger
 				);
 				if (record) {
 					await this.stateStore.put(record);
@@ -224,7 +238,8 @@ export class SyncExecutor {
 						this.localFs,
 						this.remoteFs,
 						this.enableThreeWayMerge,
-						this.stateStore
+						this.stateStore,
+						this.logger
 					);
 					if (dupRecord) {
 						await this.stateStore.put(dupRecord);
@@ -269,6 +284,7 @@ export class SyncExecutor {
 				await this.stateStore.putContent(path, content);
 			} catch (err) {
 				console.warn(`Smart Sync: failed to store content for 3-way merge (${path}):`, err);
+				this.logger?.warn("Failed to store content for 3-way merge", { path, error: err instanceof Error ? err.message : String(err) });
 			}
 		}
 	}

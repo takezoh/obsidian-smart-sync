@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import type { TokenResponse } from "./types";
+import type { Logger } from "../../logging/logger";
 import { assertTokenResponse } from "./types";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -21,11 +22,16 @@ export class GoogleAuth {
 	private accessTokenExpiry = 0;
 	private refreshToken = "";
 	private refreshPromise: Promise<string> | null = null;
+	private logger?: Logger;
 
 	/** PKCE code verifier for the current auth flow */
 	private codeVerifier: string | null = null;
 	/** Anti-CSRF state parameter for the current auth flow */
 	private authState: string | null = null;
+
+	constructor(logger?: Logger) {
+		this.logger = logger;
+	}
 
 	/** Set stored tokens (loaded from plugin settings) */
 	setTokens(refreshToken: string, accessToken: string, expiry: number): void {
@@ -157,6 +163,7 @@ export class GoogleAuth {
 
 	/** Perform the actual token refresh (called at most once per expiry cycle) */
 	private async _refreshToken(): Promise<string> {
+		this.logger?.info("Refreshing access token");
 		const params = new URLSearchParams({
 			grant_type: "refresh_token",
 			refresh_token: this.refreshToken,
@@ -204,6 +211,7 @@ export class GoogleAuth {
 		} catch {
 			// Best-effort: log but don't throw — local cleanup still proceeds
 			console.warn("Smart Sync: failed to revoke Google token (non-fatal)");
+			this.logger?.warn("Failed to revoke Google token (non-fatal)");
 		}
 	}
 }

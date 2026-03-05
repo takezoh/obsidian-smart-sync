@@ -66,7 +66,12 @@ export class SyncService {
 	}
 
 	shouldSync(): boolean {
-		return !!this.deps.remoteFs() && !this.syncMutex.isLocked;
+		const hasRemote = !!this.deps.remoteFs();
+		const isLocked = this.syncMutex.isLocked;
+		if (!hasRemote || isLocked) {
+			this.deps.logger?.debug("shouldSync: skipped", { hasRemote, isLocked });
+		}
+		return hasRemote && !isLocked;
 	}
 
 	isExcluded(path: string): boolean {
@@ -216,6 +221,14 @@ export class SyncService {
 			}
 			return true;
 		});
+		if (filtered.length !== entities.length) {
+			this.deps.logger?.debug("Files filtered", {
+				total: entities.length,
+				afterFilter: filtered.length,
+				excluded: entities.length - filtered.length,
+			});
+		}
+
 		// Resolve empty hashes for initial sync (both exist, no prevSync)
 		await this.resolveEmptyHashes(filtered, localFs, remoteFs);
 
@@ -231,6 +244,7 @@ export class SyncService {
 
 		let bulkStrategy: ConflictStrategy | null = null;
 		if (conflictDecisions.length >= 5 && settings.conflictStrategy === "ask") {
+			this.deps.logger?.info("Showing conflict summary modal", { conflictCount: conflictDecisions.length });
 			bulkStrategy = await this.deps.resolveConflictBatch(conflictDecisions);
 		}
 
@@ -256,6 +270,7 @@ export class SyncService {
 			enableThreeWayMerge: settings.enableThreeWayMerge,
 			onProgress,
 			onConflict: bulkStrategy ? undefined : onConflict,
+			logger: this.deps.logger,
 		});
 
 		const result = await executor.execute(decisions);

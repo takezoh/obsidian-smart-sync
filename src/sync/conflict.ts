@@ -1,6 +1,7 @@
 import type { IFileSystem } from "../fs/interface";
 import type { FileEntity, ConflictStrategy, SyncRecord } from "../fs/types";
 import type { SyncStateStore } from "./state";
+import type { Logger } from "../logging/logger";
 import { getFileExtension } from "../utils/path";
 import { isMergeEligible, threeWayMerge } from "./merge";
 
@@ -28,7 +29,8 @@ export async function resolveConflict(
 	remote?: FileEntity,
 	prevSync?: SyncRecord,
 	stateStore?: SyncStateStore,
-	fallback?: FallbackResolver
+	fallback?: FallbackResolver,
+	logger?: Logger
 ): Promise<ConflictResolutionResult> {
 	switch (strategy) {
 		case "keep_local":
@@ -46,7 +48,7 @@ export async function resolveConflict(
 		case "three_way_merge":
 			return attemptThreeWayMerge(
 				path, localFs, remoteFs, local, remote, prevSync,
-				stateStore, fallback ?? "keep_newer"
+				stateStore, fallback ?? "keep_newer", logger
 			);
 
 		case "ask":
@@ -55,6 +57,7 @@ export async function resolveConflict(
 			console.warn(
 				`Smart Sync: "ask" strategy reached resolveConflict without callback for "${path}", falling back to keep_newer`
 			);
+			logger?.warn("Ask strategy reached resolveConflict without callback, falling back to keep_newer", { path });
 			return keepNewer(path, localFs, remoteFs, local, remote);
 	}
 }
@@ -206,7 +209,8 @@ async function attemptThreeWayMerge(
 	remote?: FileEntity,
 	prevSync?: SyncRecord,
 	stateStore?: SyncStateStore,
-	fallback: FallbackResolver = "keep_newer"
+	fallback: FallbackResolver = "keep_newer",
+	logger?: Logger
 ): Promise<ConflictResolutionResult> {
 	const resolveFallback = async (): Promise<ConflictStrategy> => {
 		return typeof fallback === "function" ? await fallback() : fallback;
@@ -244,6 +248,7 @@ async function attemptThreeWayMerge(
 		mergeResult = threeWayMerge(baseText, localText, remoteText);
 	} catch (mergeErr) {
 		console.warn(`Smart Sync: 3-way merge failed for "${path}", falling back:`, mergeErr);
+		logger?.warn("3-way merge failed, falling back", { path, error: mergeErr instanceof Error ? mergeErr.message : String(mergeErr) });
 		const fb = await resolveFallback();
 		return resolveConflict(path, fb, localFs, remoteFs, local, remote);
 	}
@@ -269,6 +274,7 @@ async function attemptThreeWayMerge(
 			await localFs.write(path, encoder.encode(localText).buffer as ArrayBuffer, local.mtime);
 		} catch (restoreErr) {
 			console.error(`Smart Sync: failed to restore local after merge failure (${path}):`, restoreErr);
+			logger?.error("Failed to restore local after merge failure", { path, error: restoreErr instanceof Error ? restoreErr.message : String(restoreErr) });
 		}
 		throw remoteWriteErr;
 	}
@@ -285,7 +291,8 @@ export async function buildSyncRecord(
 	localFs: IFileSystem,
 	remoteFs: IFileSystem,
 	storeContent?: boolean,
-	stateStore?: SyncStateStore
+	stateStore?: SyncStateStore,
+	logger?: Logger
 ): Promise<SyncRecord | null> {
 	const localStat = await localFs.stat(path);
 	const remoteStat = await remoteFs.stat(path);
@@ -309,6 +316,7 @@ export async function buildSyncRecord(
 			await stateStore.putContent(path, content);
 		} catch (err) {
 			console.warn(`Smart Sync: failed to store content for 3-way merge (${path}):`, err);
+			logger?.warn("Failed to store content for 3-way merge", { path, error: err instanceof Error ? err.message : String(err) });
 		}
 	}
 

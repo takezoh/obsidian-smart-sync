@@ -30,11 +30,13 @@ export default class SmartSyncPlugin extends Plugin {
 
 		this.localFs = new LocalFs(this.app);
 
+		const deviceName = getDeviceName(Platform.isMobile, this.settings.vaultId);
 		this.logger = new Logger(
 			this.app.vault.adapter as unknown as LoggerAdapter,
 			() => this.settings,
-			getDeviceName(Platform.isMobile, this.settings.vaultId),
+			deviceName,
 		);
+		this.logger.info("Plugin loaded", { deviceName, vaultId: this.settings.vaultId });
 
 		this.syncService = new SyncService({
 			getSettings: () => this.settings,
@@ -146,6 +148,7 @@ export default class SmartSyncPlugin extends Plugin {
 		this.logger.dispose();
 		this.syncService.close().catch((e) => {
 			console.error("Smart Sync: failed to close sync service", e);
+			this.logger.error("Failed to close sync service", { message: e instanceof Error ? e.message : String(e) });
 		});
 	}
 
@@ -216,10 +219,11 @@ export default class SmartSyncPlugin extends Plugin {
 
 		try {
 			if (provider.isConnected(this.settings)) {
-				this.remoteFs = provider.createFs(this.app, this.settings);
+				this.remoteFs = provider.createFs(this.app, this.settings, this.logger);
 				if (this.remoteFs) {
 					this.syncStatus = "idle";
 					this.updateStatusBar();
+					this.logger.info("Backend initialized", { backend: this.settings.backendType });
 				}
 			} else {
 				this.remoteFs = null;
@@ -228,6 +232,7 @@ export default class SmartSyncPlugin extends Plugin {
 			}
 		} catch (e) {
 			console.error("Smart Sync: failed to initialize backend", e);
+			this.logger.error("Failed to initialize backend", { message: e instanceof Error ? e.message : String(e) });
 		}
 	}
 
@@ -268,7 +273,8 @@ export default class SmartSyncPlugin extends Plugin {
 
 			this.remoteFs = this.backendProvider.createFs(
 				this.app,
-				this.settings
+				this.settings,
+				this.logger
 			);
 			if (this.remoteFs) {
 				this.syncStatus = "idle";

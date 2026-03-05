@@ -4,6 +4,7 @@ import type { IBackendProvider } from "../backend";
 import type { IAuthProvider } from "../auth";
 import type { IFileSystem } from "../interface";
 import type { SmartSyncSettings } from "../../settings";
+import type { Logger } from "../../logging/logger";
 import { GoogleAuth } from "./auth";
 import { DriveClient } from "./client";
 import { GoogleDriveFs } from "./index";
@@ -92,12 +93,12 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 	 * Get or create a GoogleAuth instance for FS creation.
 	 * Re-creates if the stored refreshToken has changed.
 	 */
-	getOrCreateGoogleAuth(settings: SmartSyncSettings): GoogleAuth {
+	getOrCreateGoogleAuth(settings: SmartSyncSettings, logger?: Logger): GoogleAuth {
 		if (
 			!this.googleAuth ||
 			this.googleAuth.getTokenState().refreshToken !== settings.refreshToken
 		) {
-			this.googleAuth = new GoogleAuth();
+			this.googleAuth = new GoogleAuth(logger);
 		}
 		return this.googleAuth;
 	}
@@ -118,17 +119,17 @@ export class GoogleDriveProvider implements IBackendProvider {
 		this.auth = new GoogleDriveAuthProvider();
 	}
 
-	createFs(_app: App, settings: SmartSyncSettings): IFileSystem | null {
+	createFs(_app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null {
 		if (!settings.refreshToken || !settings.driveFolderId) return null;
 
-		const googleAuth = this.auth.getOrCreateGoogleAuth(settings);
+		const googleAuth = this.auth.getOrCreateGoogleAuth(settings, logger);
 		googleAuth.setTokens(
 			settings.refreshToken,
 			settings.accessToken,
 			settings.accessTokenExpiry
 		);
-		const client = new DriveClient(googleAuth);
-		const fs = new GoogleDriveFs(client, settings.driveFolderId);
+		const client = new DriveClient(googleAuth, logger);
+		const fs = new GoogleDriveFs(client, settings.driveFolderId, logger);
 
 		// Restore the changes page token for incremental sync
 		if (settings.changesStartPageToken) {

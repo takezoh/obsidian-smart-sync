@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import type { GoogleAuth } from "./auth";
+import type { Logger } from "../../logging/logger";
 import type { DriveFile, DriveFileList, DriveChangeList } from "./types";
 import {
 	assertDriveFile,
@@ -27,10 +28,12 @@ interface ResumeCacheEntry {
  */
 export class DriveClient {
 	private auth: GoogleAuth;
+	private logger?: Logger;
 	private resumeCache = new Map<string, ResumeCacheEntry>();
 
-	constructor(auth: GoogleAuth) {
+	constructor(auth: GoogleAuth, logger?: Logger) {
 		this.auth = auth;
+		this.logger = logger;
 	}
 
 	/** Wrap requestUrl with operation-name context and preserve status/headers for retry logic */
@@ -42,6 +45,8 @@ export class DriveClient {
 			return await requestUrl(opts);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
+			const status = err && typeof err === "object" && "status" in err ? (err as Record<string, unknown>).status : undefined;
+			this.logger?.error("Drive API request failed", { operation, status, error: msg });
 			const wrapped = new Error(`Drive API ${operation} failed: ${msg}`);
 			if (err && typeof err === "object" && "status" in err) {
 				(wrapped as unknown as Record<string, unknown>).status = (err as Record<string, unknown>).status;

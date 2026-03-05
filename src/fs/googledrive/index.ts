@@ -2,6 +2,7 @@ import type { IFileSystem } from "../interface";
 import type { FileEntity } from "../types";
 import type { DriveFile } from "./types";
 import type { DriveClient } from "./client";
+import type { Logger } from "../../logging/logger";
 import { sha256 } from "../../utils/hash";
 import { AsyncMutex } from "../../queue/async-queue";
 
@@ -27,13 +28,15 @@ export class GoogleDriveFs implements IFileSystem {
 
 	private initialized = false;
 	private cacheMutex = new AsyncMutex();
+	private logger?: Logger;
 
 	/** Latest changes start page token (for incremental sync) */
 	private _changesPageToken: string | null = null;
 
-	constructor(client: DriveClient, rootFolderId: string) {
+	constructor(client: DriveClient, rootFolderId: string, logger?: Logger) {
 		this.client = client;
 		this.rootFolderId = rootFolderId;
+		this.logger = logger;
 	}
 
 	/** Get the current changes page token to persist between sessions */
@@ -74,6 +77,7 @@ export class GoogleDriveFs implements IFileSystem {
 		}
 
 		this.initialized = true;
+		this.logger?.info("Full scan completed", { fileCount: this.pathToFile.size });
 	}
 
 	/** Ensure the metadata cache is initialized (full scan on first call) */
@@ -102,6 +106,8 @@ export class GoogleDriveFs implements IFileSystem {
 		try {
 			let pageToken: string | undefined;
 
+		let totalChanges = 0;
+
 			do {
 				const result = await this.client.listChanges(
 					this._changesPageToken,
@@ -124,6 +130,7 @@ export class GoogleDriveFs implements IFileSystem {
 					return 0;
 				});
 
+				totalChanges += sorted.length;
 				for (const change of sorted) {
 					if (change.removed || change.file?.trashed) {
 						const path = this.idToPath.get(change.fileId);
@@ -140,9 +147,13 @@ export class GoogleDriveFs implements IFileSystem {
 					this._changesPageToken = result.newStartPageToken;
 				}
 			} while (pageToken);
+			if (totalChanges > 0) {
+				this.logger?.info("Incremental changes applied", { changeCount: totalChanges });
+			}
 		} catch (err) {
 			if (isHttpError(err, 410)) {
 				// Token expired, fall back to full scan
+				this.logger?.info("Changes token expired (410), falling back to full scan");
 				this.initialized = false;
 				await this.fullScan();
 				return;
@@ -265,6 +276,7 @@ export class GoogleDriveFs implements IFileSystem {
 			if (!parentId || parentId === this.rootFolderId) break;
 			if (visited.has(parentId)) {
 				console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
+				this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
 				break;
 			}
 			const parent = byId.get(parentId);
@@ -394,6 +406,7 @@ export class GoogleDriveFs implements IFileSystem {
 		await this.cacheMutex.run(async () => {
 			if (existingId && this.pathToFile.get(path)?.id !== existingId) {
 				console.warn(`Smart Sync: skipping stale cache update for write("${path}") — ID changed during upload`);
+				this.logger?.warn("Skipping stale cache update for write", { path });
 				return;
 			}
 			this.pathToFile.set(path, driveFile);
@@ -449,6 +462,7 @@ export class GoogleDriveFs implements IFileSystem {
 				this.removePath(path);
 			} else {
 				console.warn(`Smart Sync: skipping stale cache update for delete("${path}") — ID changed during deletion`);
+				this.logger?.warn("Skipping stale cache update for delete", { path });
 			}
 		});
 	}
@@ -516,6 +530,7 @@ export class GoogleDriveFs implements IFileSystem {
 		await this.cacheMutex.run(async () => {
 			if (this.pathToFile.get(oldPath)?.id !== fileId) {
 				console.warn(`Smart Sync: skipping stale cache update for rename("${oldPath}" → "${newPath}") — ID changed during rename`);
+				this.logger?.warn("Skipping stale cache update for rename", { oldPath, newPath });
 				return;
 			}
 
