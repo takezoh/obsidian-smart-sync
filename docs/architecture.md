@@ -334,7 +334,7 @@ OAuth 2.0 + PKCE (S256) authentication.
 
 OAuth client ID and secret are embedded as constants (no user configuration needed).
 
-1. `getAuthorizationUrl()` generates a PKCE code challenge and redirects to Google's authorization endpoint via the OAuth relay (`smartsync.takezoh.dev`)
+1. `getAuthorizationUrl()` generates a PKCE code challenge and redirects to Google's authorization endpoint via the OAuth relay (`smartsync.takezo.dev`)
 2. The relay page redirects to `obsidian://smart-sync-auth?code=...&state=...`, which the plugin receives via `registerObsidianProtocolHandler`. Manual callback URL paste is available as a fallback
 3. `exchangeCode()` obtains access/refresh tokens directly from Google's token endpoint
 4. `getAccessToken()` retrieves tokens, auto-refreshing 60 seconds before expiry
