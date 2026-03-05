@@ -103,13 +103,17 @@ export class Logger {
 		this.buffer = [];
 
 		const date = new Date().toISOString().slice(0, 10);
-		const dir = `.smartsync/${this.deviceName}`;
+		const logsDir = ".smartsync/logs";
+		const dir = `${logsDir}/${this.deviceName}`;
 		const filePath = `${dir}/${date}.log`;
 
 		try {
 			// Ensure directories exist
 			if (!(await this.adapter.exists(".smartsync"))) {
 				await this.adapter.mkdir(".smartsync");
+			}
+			if (!(await this.adapter.exists(logsDir))) {
+				await this.adapter.mkdir(logsDir);
 			}
 			if (!(await this.adapter.exists(dir))) {
 				await this.adapter.mkdir(dir);

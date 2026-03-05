@@ -49,7 +49,7 @@ describe("Logger", () => {
 
 		const files = Array.from(adapter.written.keys());
 		expect(files).toHaveLength(1);
-		expect(files[0]).toMatch(/^\.smartsync\/desktop\/\d{4}-\d{2}-\d{2}\.log$/);
+		expect(files[0]).toMatch(/^\.smartsync\/logs\/desktop\/\d{4}-\d{2}-\d{2}\.log$/);
 
 		const content = adapter.written.get(files[0] ?? "")!;
 		expect(content).toContain("[INFO] test message");
@@ -71,7 +71,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/my-iphone/");
+		expect(files[0]).toContain(".smartsync/logs/my-iphone/");
 	});
 
 	it("sanitizes unsafe characters in device name", async () => {
@@ -81,7 +81,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/pc-work-station-1/");
+		expect(files[0]).toContain(".smartsync/logs/pc-work-station-1/");
 	});
 
 	it("falls back to 'unknown' for empty device name", async () => {
@@ -91,7 +91,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/unknown/");
+		expect(files[0]).toContain(".smartsync/logs/unknown/");
 	});
 
 	it("filters logs below configured level", async () => {
@@ -137,7 +137,8 @@ describe("Logger", () => {
 		await logger.flush();
 
 		expect(adapter.dirs.has(".smartsync")).toBe(true);
-		expect(adapter.dirs.has(".smartsync/desktop")).toBe(true);
+		expect(adapter.dirs.has(".smartsync/logs")).toBe(true);
+		expect(adapter.dirs.has(".smartsync/logs/desktop")).toBe(true);
 	});
 
 	it("getDeviceName returns 'mobile-{vaultId}' on mobile with vaultId", () => {

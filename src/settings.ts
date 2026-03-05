@@ -18,7 +18,7 @@ export interface SmartSyncSettings {
 	/** Maximum file size in MB to sync on mobile */
 	mobileMaxFileSizeMB: number;
 
-	/** Write sync logs to .smartsync/{device}/{date}.log */
+	/** Write sync logs to .smartsync/logs/{device}/{date}.log */
 	enableLogging: boolean;
 	/** Minimum log level to write */
 	logLevel: "debug" | "info" | "warn" | "error";
