@@ -18,7 +18,8 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "file.md", "remote content", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_local", localFs, remoteFs, local, remoteFs.files.get("file.md")!.entity
+				{ path: "file.md", localFs, remoteFs, local, remote: remoteFs.files.get("file.md")!.entity },
+				"keep_local",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -29,7 +30,8 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "file.md", "remote content", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_local", localFs, remoteFs, undefined, remoteFs.files.get("file.md")!.entity
+				{ path: "file.md", localFs, remoteFs, remote: remoteFs.files.get("file.md")!.entity },
+				"keep_local",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -43,7 +45,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote content", 2000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_remote", localFs, remoteFs, localFs.files.get("file.md")!.entity, remote
+				{ path: "file.md", localFs, remoteFs, local: localFs.files.get("file.md")!.entity, remote },
+				"keep_remote",
 			);
 
 			expect(result.action).toBe("kept_remote");
@@ -54,7 +57,8 @@ describe("resolveConflict", () => {
 			addFile(localFs, "file.md", "local content", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_remote", localFs, remoteFs, localFs.files.get("file.md")!.entity, undefined
+				{ path: "file.md", localFs, remoteFs, local: localFs.files.get("file.md")!.entity },
+				"keep_remote",
 			);
 
 			expect(result.action).toBe("kept_remote");
@@ -68,7 +72,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote older", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -80,7 +85,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote newer", 2000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_remote");
@@ -91,7 +97,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote only", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, undefined, remote
+				{ path: "file.md", localFs, remoteFs, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_remote");
@@ -102,7 +109,8 @@ describe("resolveConflict", () => {
 			const local = addFile(localFs, "file.md", "local only", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, undefined
+				{ path: "file.md", localFs, remoteFs, local },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -116,7 +124,8 @@ describe("resolveConflict", () => {
 			remote.hash = "bbb";
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -129,7 +138,8 @@ describe("resolveConflict", () => {
 			remote.hash = "same-hash";
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -142,7 +152,8 @@ describe("resolveConflict", () => {
 			remote.hash = "bbb";
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			// mtime=0 is unknown, so mtime comparison is skipped; hashes differ → duplicate
@@ -156,7 +167,8 @@ describe("resolveConflict", () => {
 			remote.hash = "same-hash";
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("kept_local");
@@ -167,7 +179,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote ver", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "keep_newer", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"keep_newer",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -180,7 +193,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote ver", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "duplicate", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"duplicate",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -199,7 +213,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote ver", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "duplicate", localFs, remoteFs, local, remote
+				{ path: "file.md", localFs, remoteFs, local, remote },
+				"duplicate",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -212,7 +227,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote content", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "duplicate", localFs, remoteFs, undefined, remote
+				{ path: "file.md", localFs, remoteFs, remote },
+				"duplicate",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -223,7 +239,8 @@ describe("resolveConflict", () => {
 			const local = addFile(localFs, "file.md", "local content", 1000);
 
 			const result = await resolveConflict(
-				"file.md", "duplicate", localFs, remoteFs, local, undefined
+				{ path: "file.md", localFs, remoteFs, local },
+				"duplicate",
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -249,14 +266,13 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"file.md",
+				{
+					path: "file.md", localFs, remoteFs,
+					local: localFs.files.get("file.md")!.entity,
+					remote: remoteFs.files.get("file.md")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("file.md")!.entity,
-				remoteFs.files.get("file.md")!.entity,
-				prevSync,
-				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -280,14 +296,13 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"file.md",
+				{
+					path: "file.md", localFs, remoteFs,
+					local: localFs.files.get("file.md")!.entity,
+					remote: remoteFs.files.get("file.md")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("file.md")!.entity,
-				remoteFs.files.get("file.md")!.entity,
-				prevSync,
-				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -299,13 +314,8 @@ describe("resolveConflict", () => {
 			const remote = addFile(remoteFs, "file.md", "remote", 1000);
 
 			const result = await resolveConflict(
-				"file.md",
+				{ path: "file.md", localFs, remoteFs, local, remote },
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				local,
-				remote,
-				undefined, // no prevSync
 			);
 
 			// Falls back to keep_newer → local is newer
@@ -325,14 +335,8 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"image.png",
+				{ path: "image.png", localFs, remoteFs, local, remote, prevSync, stateStore },
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				local,
-				remote,
-				prevSync,
-				stateStore,
 			);
 
 			// .png is not merge-eligible, falls back to keep_newer → local is newer
@@ -345,7 +349,7 @@ describe("resolveConflict", () => {
 			addFile(localFs, "file.md", "content", 1000);
 			addFile(remoteFs, "file.md", "content", 1000);
 
-			const record = await buildSyncRecord("file.md", localFs, remoteFs);
+			const record = await buildSyncRecord({ path: "file.md", localFs, remoteFs });
 			expect(record).not.toBeNull();
 			expect(record!.path).toBe("file.md");
 			expect(record!.localMtime).toBe(1000);
@@ -353,7 +357,7 @@ describe("resolveConflict", () => {
 		});
 
 		it("returns null when neither side exists", async () => {
-			const record = await buildSyncRecord("nonexistent.md", localFs, remoteFs);
+			const record = await buildSyncRecord({ path: "nonexistent.md", localFs, remoteFs });
 			expect(record).toBeNull();
 		});
 
@@ -362,7 +366,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "file.md", "hello", 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("file.md", localFs, remoteFs, true, stateStore);
+			await buildSyncRecord({ path: "file.md", localFs, remoteFs, stateStore }, true);
 			expect(stateStore.contents.has("file.md")).toBe(true);
 		});
 
@@ -371,7 +375,7 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "image.png", "binary-data", 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("image.png", localFs, remoteFs, true, stateStore);
+			await buildSyncRecord({ path: "image.png", localFs, remoteFs, stateStore }, true);
 			expect(stateStore.contents.has("image.png")).toBe(false);
 		});
 
@@ -381,14 +385,14 @@ describe("resolveConflict", () => {
 			addFile(remoteFs, "big.md", bigContent, 1000);
 			const stateStore = createMockStateStore();
 
-			await buildSyncRecord("big.md", localFs, remoteFs, true, stateStore);
+			await buildSyncRecord({ path: "big.md", localFs, remoteFs, stateStore }, true);
 			expect(stateStore.contents.has("big.md")).toBe(false);
 		});
 
 		it("returns a record when only one side exists", async () => {
 			addFile(localFs, "local-only.md", "content", 1000);
 
-			const record = await buildSyncRecord("local-only.md", localFs, remoteFs);
+			const record = await buildSyncRecord({ path: "local-only.md", localFs, remoteFs });
 			expect(record).not.toBeNull();
 			expect(record!.localMtime).toBe(1000);
 			expect(record!.remoteMtime).toBe(0);
@@ -460,14 +464,13 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"data.json",
+				{
+					path: "data.json", localFs, remoteFs,
+					local: localFs.files.get("data.json")!.entity,
+					remote: remoteFs.files.get("data.json")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("data.json")!.entity,
-				remoteFs.files.get("data.json")!.entity,
-				prevSync,
-				stateStore,
 			);
 
 			// Conflicting edits to the same JSON key → conflict markers → invalid JSON → duplicate fallback
@@ -491,14 +494,13 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"note.canvas",
+				{
+					path: "note.canvas", localFs, remoteFs,
+					local: localFs.files.get("note.canvas")!.entity,
+					remote: remoteFs.files.get("note.canvas")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("note.canvas")!.entity,
-				remoteFs.files.get("note.canvas")!.entity,
-				prevSync,
-				stateStore,
 			);
 
 			expect(result.action).toBe("duplicated");
@@ -522,14 +524,13 @@ describe("resolveConflict", () => {
 			};
 
 			const result = await resolveConflict(
-				"config.json",
+				{
+					path: "config.json", localFs, remoteFs,
+					local: localFs.files.get("config.json")!.entity,
+					remote: remoteFs.files.get("config.json")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("config.json")!.entity,
-				remoteFs.files.get("config.json")!.entity,
-				prevSync,
-				stateStore,
 			);
 
 			expect(result.action).toBe("merged");
@@ -566,14 +567,13 @@ describe("resolveConflict", () => {
 			};
 
 			await expect(resolveConflict(
-				"file.md",
+				{
+					path: "file.md", localFs, remoteFs,
+					local: localFs.files.get("file.md")!.entity,
+					remote: remoteFs.files.get("file.md")!.entity,
+					prevSync, stateStore,
+				},
 				"three_way_merge",
-				localFs,
-				remoteFs,
-				localFs.files.get("file.md")!.entity,
-				remoteFs.files.get("file.md")!.entity,
-				prevSync,
-				stateStore,
 			)).rejects.toThrow("Remote write failed");
 
 			// Local should be restored to pre-merge content

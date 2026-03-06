@@ -14,6 +14,17 @@ export interface ConflictResolutionResult {
 	hasConflictMarkers?: boolean;
 }
 
+export interface ConflictContext {
+	path: string;
+	localFs: IFileSystem;
+	remoteFs: IFileSystem;
+	local?: FileEntity;
+	remote?: FileEntity;
+	prevSync?: SyncRecord;
+	stateStore?: SyncStateStore;
+	logger?: Logger;
+}
+
 /**
  * Resolve a conflict between local and remote versions of a file.
  * Supports: keep_newer, keep_local, keep_remote, duplicate, three_way_merge, ask.
@@ -21,17 +32,12 @@ export interface ConflictResolutionResult {
 export type FallbackResolver = ConflictStrategy | (() => Promise<ConflictStrategy>);
 
 export async function resolveConflict(
-	path: string,
+	ctx: ConflictContext,
 	strategy: ConflictStrategy,
-	localFs: IFileSystem,
-	remoteFs: IFileSystem,
-	local?: FileEntity,
-	remote?: FileEntity,
-	prevSync?: SyncRecord,
-	stateStore?: SyncStateStore,
 	fallback?: FallbackResolver,
-	logger?: Logger
 ): Promise<ConflictResolutionResult> {
+	const { path, localFs, remoteFs, local, remote, logger } = ctx;
+
 	switch (strategy) {
 		case "keep_local":
 			return keepLocal(path, localFs, remoteFs, local);
@@ -46,10 +52,7 @@ export async function resolveConflict(
 			return duplicate(path, localFs, remoteFs, local, remote);
 
 		case "three_way_merge":
-			return attemptThreeWayMerge(
-				path, localFs, remoteFs, local, remote, prevSync,
-				stateStore, fallback ?? "keep_newer", logger
-			);
+			return attemptThreeWayMerge(ctx, fallback ?? "keep_newer");
 
 		case "ask":
 			// Handled by executor via onConflict callback before reaching here.
@@ -202,16 +205,11 @@ function insertConflictSuffix(path: string, seq: number | string): string {
 }
 
 async function attemptThreeWayMerge(
-	path: string,
-	localFs: IFileSystem,
-	remoteFs: IFileSystem,
-	local?: FileEntity,
-	remote?: FileEntity,
-	prevSync?: SyncRecord,
-	stateStore?: SyncStateStore,
+	ctx: ConflictContext,
 	fallback: FallbackResolver = "keep_newer",
-	logger?: Logger
 ): Promise<ConflictResolutionResult> {
+	const { path, localFs, remoteFs, local, remote, prevSync, stateStore, logger } = ctx;
+
 	const resolveFallback = async (): Promise<ConflictStrategy> => {
 		return typeof fallback === "function" ? await fallback() : fallback;
 	};
@@ -219,19 +217,19 @@ async function attemptThreeWayMerge(
 	// Must have both sides present and a previous sync record
 	if (!local || !remote || !prevSync) {
 		const fb = await resolveFallback();
-		return resolveConflict(path, fb, localFs, remoteFs, local, remote);
+		return resolveConflict(ctx, fb);
 	}
 
 	// Retrieve the stored base content
 	const prevSyncContent = stateStore ? await stateStore.getContent(path) : undefined;
 	if (!prevSyncContent) {
 		const fb = await resolveFallback();
-		return resolveConflict(path, fb, localFs, remoteFs, local, remote);
+		return resolveConflict(ctx, fb);
 	}
 
 	if (!isMergeEligible(path, Math.max(local.size, remote.size))) {
 		const fb = await resolveFallback();
-		return resolveConflict(path, fb, localFs, remoteFs, local, remote);
+		return resolveConflict(ctx, fb);
 	}
 
 	const decoder = new TextDecoder();
@@ -250,7 +248,7 @@ async function attemptThreeWayMerge(
 		console.warn(`Smart Sync: 3-way merge failed for "${path}", falling back:`, mergeErr);
 		logger?.warn("3-way merge failed, falling back", { path, error: mergeErr instanceof Error ? mergeErr.message : String(mergeErr) });
 		const fb = await resolveFallback();
-		return resolveConflict(path, fb, localFs, remoteFs, local, remote);
+		return resolveConflict(ctx, fb);
 	}
 
 	// For JSON/Canvas files, validate the merge result
@@ -287,13 +285,10 @@ async function attemptThreeWayMerge(
 
 /** Build sync record from current file state on both sides */
 export async function buildSyncRecord(
-	path: string,
-	localFs: IFileSystem,
-	remoteFs: IFileSystem,
+	ctx: Pick<ConflictContext, "path" | "localFs" | "remoteFs" | "stateStore" | "logger">,
 	storeContent?: boolean,
-	stateStore?: SyncStateStore,
-	logger?: Logger
 ): Promise<SyncRecord | null> {
+	const { path, localFs, remoteFs, stateStore, logger } = ctx;
 	const localStat = await localFs.stat(path);
 	const remoteStat = await remoteFs.stat(path);
 
