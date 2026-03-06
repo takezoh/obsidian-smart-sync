@@ -37,6 +37,9 @@ src/
 │   ├── state.ts         # SyncStateStore — IndexedDB
 │   ├── conflict.ts      # resolveConflict() — 6 strategies
 │   └── merge.ts         # threeWayMerge() — node-diff3
+├── store/
+│   ├── idb-helper.ts    # IDBHelper — shared IndexedDB lifecycle & transaction helper
+│   └── metadata-store.ts # MetadataStore<T> — generic IndexedDB metadata cache
 ├── queue/async-queue.ts # AsyncMutex
 ├── utils/               # sha256(), matchGlob()
 ├── ui/                  # SettingTab, IBackendSettingsRenderer, ConflictModal, ConflictSummaryModal

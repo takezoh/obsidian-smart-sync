@@ -2,6 +2,7 @@ import type { IFileSystem } from "../interface";
 import type { FileEntity } from "../types";
 import type { DriveFile } from "./types";
 import type { DriveClient } from "./client";
+import type { MetadataStore } from "../../store/metadata-store";
 import type { Logger } from "../../logging/logger";
 import { sha256 } from "../../utils/hash";
 import { AsyncMutex } from "../../queue/async-queue";
@@ -25,18 +26,55 @@ export class GoogleDriveFs implements IFileSystem {
 	private idToPath = new Map<string, string>();
 	/** Tracks which paths are folders */
 	private folders = new Set<string>();
+	/** Parent path → set of direct child paths (for O(k) child lookups) */
+	private children = new Map<string, Set<string>>();
 
 	private initialized = false;
 	private cacheMutex = new AsyncMutex();
+	private metadataStore?: MetadataStore<DriveFile>;
 	private logger?: Logger;
 
 	/** Latest changes start page token (for incremental sync) */
 	private _changesPageToken: string | null = null;
 
-	constructor(client: DriveClient, rootFolderId: string, logger?: Logger) {
+	constructor(client: DriveClient, rootFolderId: string, logger?: Logger, metadataStore?: MetadataStore<DriveFile>) {
 		this.client = client;
 		this.rootFolderId = rootFolderId;
 		this.logger = logger;
+		this.metadataStore = metadataStore;
+	}
+
+	/** Extract the parent path from a full path ("" for root-level items) */
+	private static parentPath(path: string): string {
+		const i = path.lastIndexOf("/");
+		return i === -1 ? "" : path.substring(0, i);
+	}
+
+	/** Add a path to the children index */
+	private addToIndex(path: string): void {
+		const parent = GoogleDriveFs.parentPath(path);
+		let set = this.children.get(parent);
+		if (!set) { set = new Set(); this.children.set(parent, set); }
+		set.add(path);
+	}
+
+	/** Remove a path from the children index */
+	private removeFromIndex(path: string): void {
+		const parent = GoogleDriveFs.parentPath(path);
+		const set = this.children.get(parent);
+		if (set) { set.delete(path); if (set.size === 0) this.children.delete(parent); }
+	}
+
+	/** Collect all descendant paths via the children index */
+	private collectDescendants(path: string): string[] {
+		const result: string[] = [];
+		const stack = [path];
+		while (stack.length > 0) {
+			const cur = stack.pop()!;
+			const kids = this.children.get(cur);
+			if (kids) for (const c of kids) { result.push(c); stack.push(c); }
+		}
+		return result;
 	}
 
 	/** Get the current changes page token to persist between sessions */
@@ -54,6 +92,7 @@ export class GoogleDriveFs implements IFileSystem {
 		this.pathToFile.clear();
 		this.idToPath.clear();
 		this.folders.clear();
+		this.children.clear();
 
 		// Get starting page token BEFORE listing to not miss concurrent changes
 		this._changesPageToken = await this.client.getChangesStartToken();
@@ -77,14 +116,82 @@ export class GoogleDriveFs implements IFileSystem {
 			}
 		}
 
+		// Build children index
+		for (const path of this.pathToFile.keys()) {
+			this.addToIndex(path);
+		}
+
 		this.initialized = true;
 		this.logger?.info("Full scan completed", { fileCount: this.pathToFile.size });
+		void this.persistCache();
 	}
 
-	/** Ensure the metadata cache is initialized (full scan on first call) */
+	/** Ensure the metadata cache is initialized (load from IDB or full scan) */
 	private async ensureInitialized(): Promise<void> {
 		if (!this.initialized) {
-			await this.fullScan();
+			const loaded = await this.loadFromCache();
+			if (!loaded) {
+				await this.fullScan();
+			}
+		}
+	}
+
+	/** Try to restore cache from IndexedDB. Returns true if successful. */
+	private async loadFromCache(): Promise<boolean> {
+		if (!this.metadataStore) return false;
+		try {
+			await this.metadataStore.open();
+			const { files, meta } = await this.metadataStore.loadAll();
+			const storedRootId = meta.get("rootFolderId");
+			const storedToken = meta.get("changesStartPageToken");
+			if (storedRootId !== this.rootFolderId || !storedToken) {
+				return false;
+			}
+
+			this.pathToFile.clear();
+			this.idToPath.clear();
+			this.folders.clear();
+			this.children.clear();
+
+			for (const record of files) {
+				this.pathToFile.set(record.path, record.file);
+				this.idToPath.set(record.file.id, record.path);
+				if (record.isFolder) this.folders.add(record.path);
+				this.addToIndex(record.path);
+			}
+
+			this._changesPageToken = storedToken;
+			this.initialized = true;
+			this.logger?.info("Cache loaded from IndexedDB", { fileCount: files.length });
+			return true;
+		} catch (err) {
+			this.logger?.warn("Failed to load cache from IndexedDB, will full scan", {
+				message: err instanceof Error ? err.message : String(err),
+			});
+			return false;
+		}
+	}
+
+	/** Persist the current cache to IndexedDB */
+	private async persistCache(): Promise<void> {
+		if (!this.metadataStore) return;
+		try {
+			await this.metadataStore.open();
+			const records = [...this.pathToFile.entries()].map(([path, file]) => ({
+				path,
+				file,
+				isFolder: this.folders.has(path),
+			}));
+			const meta = new Map<string, string>();
+			meta.set("rootFolderId", this.rootFolderId);
+			if (this._changesPageToken) {
+				meta.set("changesStartPageToken", this._changesPageToken);
+			}
+			await this.metadataStore.saveAll(records, meta);
+		} catch (err) {
+			this.logger?.warn("Failed to persist cache to IndexedDB", {
+				message: err instanceof Error ? err.message : String(err),
+			});
 		}
 	}
 
@@ -108,6 +215,8 @@ export class GoogleDriveFs implements IFileSystem {
 			let pageToken: string | undefined;
 
 		let totalChanges = 0;
+			const updatedRecords: { path: string; file: DriveFile; isFolder: boolean }[] = [];
+			const deletedPaths: string[] = [];
 
 			do {
 				const result = await this.client.listChanges(
@@ -136,10 +245,20 @@ export class GoogleDriveFs implements IFileSystem {
 					if (change.removed || change.file?.trashed) {
 						const path = this.idToPath.get(change.fileId);
 						if (path) {
+							// Collect descendants before removing
+							deletedPaths.push(path, ...this.collectDescendants(path));
 							this.removePath(path);
 						}
 					} else if (change.file) {
 						this.applyFileChange(change.file);
+						const updatedPath = this.idToPath.get(change.file.id);
+						if (updatedPath) {
+							updatedRecords.push({
+								path: updatedPath,
+								file: change.file,
+								isFolder: change.file.mimeType === FOLDER_MIME,
+							});
+						}
 					}
 				}
 
@@ -150,6 +269,7 @@ export class GoogleDriveFs implements IFileSystem {
 			} while (pageToken);
 			if (totalChanges > 0) {
 				this.logger?.info("Incremental changes applied", { changeCount: totalChanges });
+				void this.persistIncrementalChanges(updatedRecords, deletedPaths);
 			}
 		} catch (err) {
 			if (isHttpError(err, 410)) {
@@ -160,6 +280,25 @@ export class GoogleDriveFs implements IFileSystem {
 				return;
 			}
 			throw err;
+		}
+	}
+
+	/** Persist incremental changes to IndexedDB */
+	private async persistIncrementalChanges(
+		updated: { path: string; file: DriveFile; isFolder: boolean }[],
+		deleted: string[],
+	): Promise<void> {
+		if (!this.metadataStore) return;
+		try {
+			if (updated.length > 0) await this.metadataStore.putFiles(updated);
+			if (deleted.length > 0) await this.metadataStore.deleteFiles(deleted);
+			if (this._changesPageToken) {
+				await this.metadataStore.putMeta("changesStartPageToken", this._changesPageToken);
+			}
+		} catch (err) {
+			this.logger?.warn("Failed to persist incremental changes to IndexedDB", {
+				message: err instanceof Error ? err.message : String(err),
+			});
 		}
 	}
 
@@ -180,6 +319,7 @@ export class GoogleDriveFs implements IFileSystem {
 		// Remove old mapping if ID was at a different path (rename/move)
 		if (oldPath && oldPath !== path) {
 			const wasFolder = this.folders.has(oldPath);
+			this.removeFromIndex(oldPath);
 			this.pathToFile.delete(oldPath);
 			this.idToPath.delete(file.id);
 			this.folders.delete(oldPath);
@@ -190,6 +330,7 @@ export class GoogleDriveFs implements IFileSystem {
 
 		this.pathToFile.set(path, file);
 		this.idToPath.set(file.id, path);
+		this.addToIndex(path);
 		if (file.mimeType === FOLDER_MIME) {
 			this.folders.add(path);
 		} else {
@@ -231,15 +372,18 @@ export class GoogleDriveFs implements IFileSystem {
 	/** Rewrite all cached child paths when a folder is renamed/moved */
 	private rewriteChildPaths(oldPath: string, newPath: string): void {
 		const oldPrefix = oldPath + "/";
-		for (const [childPath, childFile] of [...this.pathToFile]) {
-			if (childPath.startsWith(oldPrefix)) {
-				const newChildPath = newPath + "/" + childPath.substring(oldPrefix.length);
-				this.pathToFile.delete(childPath);
-				this.pathToFile.set(newChildPath, childFile);
-				this.idToPath.set(childFile.id, newChildPath);
-				if (this.folders.delete(childPath)) {
-					this.folders.add(newChildPath);
-				}
+		const descendants = this.collectDescendants(oldPath);
+		for (const childPath of descendants) {
+			const childFile = this.pathToFile.get(childPath);
+			if (!childFile) continue;
+			const newChildPath = newPath + "/" + childPath.substring(oldPrefix.length);
+			this.removeFromIndex(childPath);
+			this.pathToFile.delete(childPath);
+			this.pathToFile.set(newChildPath, childFile);
+			this.idToPath.set(childFile.id, newChildPath);
+			this.addToIndex(newChildPath);
+			if (this.folders.delete(childPath)) {
+				this.folders.add(newChildPath);
 			}
 		}
 	}
@@ -250,18 +394,21 @@ export class GoogleDriveFs implements IFileSystem {
 		if (driveFile) {
 			this.idToPath.delete(driveFile.id);
 		}
+		this.removeFromIndex(path);
 		this.pathToFile.delete(path);
 		this.folders.delete(path);
 
-		// Remove children if it was a folder
-		const prefix = path + "/";
-		for (const [p, df] of this.pathToFile) {
-			if (p.startsWith(prefix)) {
-				this.idToPath.delete(df.id);
-				this.pathToFile.delete(p);
-				this.folders.delete(p);
-			}
+		// Remove children via index
+		const descendants = this.collectDescendants(path);
+		for (const p of descendants) {
+			const df = this.pathToFile.get(p);
+			if (df) this.idToPath.delete(df.id);
+			this.removeFromIndex(p);
+			this.pathToFile.delete(p);
+			this.folders.delete(p);
 		}
+		// Clean up the parent entry in the children index
+		this.children.delete(path);
 	}
 
 	/**
@@ -342,7 +489,8 @@ export class GoogleDriveFs implements IFileSystem {
 	async list(): Promise<FileEntity[]> {
 		return this.cacheMutex.run(async () => {
 			if (!this.initialized) {
-				await this.fullScan();
+				const loaded = await this.loadFromCache();
+				if (!loaded) await this.fullScan();
 			} else if (this._changesPageToken) {
 				await this._applyIncrementalChanges();
 			}
@@ -434,8 +582,10 @@ export class GoogleDriveFs implements IFileSystem {
 				this.logger?.warn("Skipping stale cache update for write", { path });
 				return;
 			}
+			const isNew = !this.pathToFile.has(path);
 			this.pathToFile.set(path, driveFile);
 			this.idToPath.set(driveFile.id, path);
+			if (isNew) this.addToIndex(path);
 		});
 
 		const hash = await sha256(content);
@@ -469,11 +619,13 @@ export class GoogleDriveFs implements IFileSystem {
 	async listDir(path: string): Promise<FileEntity[]> {
 		return this.cacheMutex.run(async () => {
 			await this.ensureInitialized();
-			const prefix = path + "/";
+			const kids = this.children.get(path);
+			if (!kids) return [];
 			const entities: FileEntity[] = [];
-			for (const [p, driveFile] of this.pathToFile) {
-				if (p.startsWith(prefix) && !p.substring(prefix.length).includes("/")) {
-					entities.push(this.driveFileToEntity(p, driveFile));
+			for (const childPath of kids) {
+				const driveFile = this.pathToFile.get(childPath);
+				if (driveFile) {
+					entities.push(this.driveFileToEntity(childPath, driveFile));
 				}
 			}
 			return entities;
@@ -573,11 +725,13 @@ export class GoogleDriveFs implements IFileSystem {
 				return;
 			}
 
+			this.removeFromIndex(oldPath);
 			this.pathToFile.delete(oldPath);
 			this.idToPath.delete(fileId);
 			this.folders.delete(oldPath);
 			this.pathToFile.set(newPath, updated);
 			this.idToPath.set(updated.id, newPath);
+			this.addToIndex(newPath);
 			if (wasFolder) {
 				this.folders.add(newPath);
 				this.rewriteChildPaths(oldPath, newPath);
@@ -612,6 +766,7 @@ export class GoogleDriveFs implements IFileSystem {
 				this.pathToFile.set(currentPath, newFolder);
 				this.idToPath.set(newFolder.id, currentPath);
 				this.folders.add(currentPath);
+				this.addToIndex(currentPath);
 				parentId = newFolder.id;
 			}
 		}
@@ -622,6 +777,12 @@ export class GoogleDriveFs implements IFileSystem {
 	/** Force re-initialization on next operation */
 	invalidateCache(): void {
 		this.initialized = false;
+		void this.metadataStore?.clear();
+	}
+
+	/** Close the metadata store (call on plugin unload) */
+	async close(): Promise<void> {
+		await this.metadataStore?.close();
 	}
 }
 

@@ -9,6 +9,8 @@ import type { Logger } from "../../logging/logger";
 import { GoogleAuth } from "./auth";
 import { DriveClient } from "./client";
 import { GoogleDriveFs } from "./index";
+import { MetadataStore } from "../../store/metadata-store";
+import type { DriveFile } from "./types";
 
 /** All data stored in backendData["googledrive"] */
 export interface GoogleDriveBackendData {
@@ -159,7 +161,11 @@ export class GoogleDriveProvider implements IBackendProvider {
 			data.accessTokenExpiry
 		);
 		const client = new DriveClient(googleAuth, logger);
-		const fs = new GoogleDriveFs(client, data.driveFolderId, logger);
+		const metadataStore = new MetadataStore<DriveFile>(_app.vault.getName(), {
+			dbNamePrefix: "smart-sync-drive",
+			version: 1,
+		});
+		const fs = new GoogleDriveFs(client, data.driveFolderId, logger, metadataStore);
 
 		// Restore the changes page token for incremental sync
 		if (data.changesStartPageToken) {

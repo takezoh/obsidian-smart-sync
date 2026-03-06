@@ -1,3 +1,8 @@
+import type { FileRecord } from "../../store/metadata-store";
+
+/** Drive-specific file record type alias */
+export type DriveFileRecord = FileRecord<DriveFile>;
+
 /** Google Drive file metadata from API response */
 export interface DriveFile {
 	id: string;

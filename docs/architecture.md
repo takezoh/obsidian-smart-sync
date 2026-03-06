@@ -27,7 +27,7 @@ src/
 │   │   ├── client.ts               # DriveClient — Drive REST API v3 client
 │   │   ├── auth.ts                 # GoogleAuth — OAuth 2.0 + PKCE
 │   │   ├── provider.ts             # GoogleDriveProvider — IBackendProvider implementation
-│   │   └── types.ts                # Drive API response types + validation functions
+│   │   └── types.ts                # Drive API response types, validation functions + DriveFileRecord alias
 │   └── mock/
 │       └── index.ts                # MockFs — in-memory IFileSystem for testing
 ├── sync/
@@ -37,6 +37,9 @@ src/
 │   ├── state.ts                    # SyncStateStore — IndexedDB-based sync state persistence
 │   ├── conflict.ts                 # resolveConflict() — conflict resolution strategy execution
 │   └── merge.ts                    # threeWayMerge() + isMergeEligible() — 3-way merge via node-diff3
+├── store/
+│   ├── idb-helper.ts               # IDBHelper — shared IndexedDB lifecycle & transaction helper
+│   └── metadata-store.ts           # MetadataStore<T> — generic IndexedDB metadata cache for backends
 ├── logging/
 │   └── logger.ts                   # Logger — structured logging to vault files
 ├── queue/
@@ -432,8 +435,10 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 - `pathToFile: Map<string, DriveFile>` — path → Drive metadata
 - `idToPath: Map<string, string>` — ID → path reverse lookup
 - `folders: Set<string>` — set of folder paths
-- First `list()` call performs a full scan via `listAllFiles()`
-- Subsequent calls use `changes.list` API for incremental updates
+- `children: Map<string, Set<string>>` — parent path → direct child paths (O(k) child lookups for rename/delete/listDir)
+- First `list()` call tries to load from IndexedDB (`MetadataStore<DriveFile>`); falls back to full scan via `listAllFiles()` if no cache or `rootFolderId` changed
+- After full scan, the cache is persisted to IndexedDB for faster reload
+- Subsequent calls use `changes.list` API for incremental updates (also persisted incrementally)
 - Falls back to full scan on HTTP 410 (expired token)
 
 **Mutex-protected cache**:
@@ -521,7 +526,7 @@ IndexedDB-based. Database name is `smart-sync-{vaultId}` (independent per vault)
 
 **Methods**: `open()`, `close()`, `get(path)`, `getAll()`, `put(record)`, `delete(path)`, `clear()`, `putContent(path, content)`, `getContent(path)`
 
-All public methods use `getDb()` internally, which handles automatic re-open if the connection was closed by an `onversionchange` event.
+Both `SyncStateStore` and `MetadataStore<T>` delegate IndexedDB lifecycle (open/close idempotency, `onversionchange` recovery, transaction wrapping) to `IDBHelper` (`store/idb-helper.ts`) via composition. Each store passes its schema-specific `onUpgrade` callback and uses `helper.runTransaction()` for all reads and writes. `MetadataStore<T>` is backend-agnostic — Google Drive instantiates it as `MetadataStore<DriveFile>`, and future backends (Dropbox, S3, etc.) can reuse the same store with their own file metadata type.
 
 DB version 3. The v2→v3 upgrade (`size` → `localSize`/`remoteSize` in `SyncRecord`) is a breaking schema change — `onupgradeneeded` drops and recreates all object stores, clearing existing sync state.
 
@@ -776,11 +781,3 @@ When no `SyncRecord` exists for a file:
 6. **OAuth client secret exposure**: The Google OAuth client secret (Web application type) is embedded in the plugin source code. Google considers Web app secrets confidential (unlike Desktop app secrets). Practical risk is low — redirect URIs are locked in GCP, PKCE prevents auth code interception, and refresh tokens are stored only on the user's device. Additionally, `exchangeCode()` verifies the `state` parameter against `pendingAuthState` before processing, preventing forged callbacks from a compromised relay or CSRF attacks. However, Google could theoretically disable the client if they detect the secret is public. Mitigation options: (a) accept the risk (common in OSS — e.g. VS Code's GitHub integration), (b) add a thin serverless backend (Cloudflare Worker / Cloud Functions) for token exchange only, or (c) revert to Desktop app type and rely on manual callback URL paste
 7. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores `md5Checksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads — however, this would couple the sync engine to a backend-specific field, conflicting with the backend-agnostic design
 
----
-
-## Known TODOs
-
-### Medium — Recognized limitations
-
-1. **In-memory metadata cache only** — `changesStartPageToken` is persisted in `backendData["googledrive"]`, but `pathToFile` / `idToPath` / `folders` caches are rebuilt from scratch on each plugin load via full scan. Persisting to IndexedDB would eliminate the initial full scan on reload
-2. **`rewriteChildPaths()` / `removePath()` O(n) scan** — Folder rename and delete operations iterate all cache entries to find children. A trie or parent→children index would reduce this to O(k) where k = number of children
