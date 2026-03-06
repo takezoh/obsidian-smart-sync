@@ -20,6 +20,7 @@ src/
 │   ├── auth.ts                     # IAuthProvider interface
 │   ├── backend.ts                  # IBackendProvider interface
 │   ├── registry.ts                 # Backend registry (getBackendProvider, getAllBackendProviders)
+│   ├── backend-manager.ts          # BackendManager — backend initialization, auth flow, lifecycle
 │   ├── local/
 │   │   ├── index.ts                # LocalFs — Obsidian Vault API wrapper
 │   │   └── dot-path-adapter.ts     # DotPathAdapter — .smartsync/ adapter (raw Vault adapter API)
@@ -28,14 +29,19 @@ src/
 │   │   ├── client.ts               # DriveClient — Drive REST API v3 client
 │   │   ├── auth.ts                 # GoogleAuth — OAuth 2.0 + PKCE
 │   │   ├── provider.ts             # GoogleDriveProvider — IBackendProvider implementation
-│   │   └── types.ts                # Drive API response types, validation functions + DriveFileRecord alias
+│   │   ├── types.ts                # Drive API response types, validation functions + DriveFileRecord alias
+│   │   ├── metadata-cache.ts       # DriveMetadataCache — in-memory path↔ID, folder, children index
+│   │   ├── incremental-sync.ts     # applyIncrementalChanges() — changes.list delta sync
+│   │   └── resumable-upload.ts     # ResumableUploader — resumable upload (>5 MB) with resume-on-retry
 │   └── mock/
 │       └── index.ts                # MockFs — in-memory IFileSystem for testing
 ├── sync/
 │   ├── types.ts                   # SyncRecord, MixedEntity, DecisionType, ConflictStrategy, SyncDecision
 │   ├── engine.ts                   # buildMixedEntities() + computeDecisions() — 3-state decision table
 │   ├── executor.ts                 # SyncExecutor — executes IFileSystem operations based on decisions
+│   ├── executor-ops.ts             # executePush/Pull/Delete/Conflict — per-phase operation functions
 │   ├── service.ts                  # SyncService — sync orchestration (retry, exclusion, UI integration)
+│   ├── error.ts                    # getErrorInfo() — HTTP status & Retry-After extraction
 │   ├── state.ts                    # SyncStateStore — IndexedDB-based sync state persistence
 │   ├── conflict.ts                 # resolveConflict() — conflict resolution strategy execution
 │   └── merge.ts                    # threeWayMerge() + isMergeEligible() — 3-way merge via node-diff3
@@ -69,8 +75,12 @@ src/
 │  - Lifecycle management                             │
 │  - Command, ribbon, status bar registration         │
 │  - Auto-sync timer, event-driven & foreground sync  │
-│  - Backend initialization & connection flow         │
 │  - Logger initialization (passed to service layer)  │
+├─────────────────────────────────────────────────────┤
+│  fs/backend-manager.ts (BackendManager)             │
+│  - Backend initialization & connection flow         │
+│  - Auth lifecycle (start, complete, disconnect)     │
+│  - Manages IBackendProvider + IFileSystem instances  │
 ├─────────────────────────────────────────────────────┤
 │  sync/service.ts (SyncService)                      │
 │  - Sync orchestration                               │
@@ -93,7 +103,7 @@ src/
 ├─────────────────────────────────────────────────────┤
 │  fs/interface.ts (IFileSystem)                      │
 │  - list, stat, read, write, mkdir, listDir,         │
-│    delete, rename                                   │
+│    delete, rename, close                             │
 ├──────────────────┬──────────────────────────────────┤
 │  fs/local/       │  fs/googledrive/                 │
 │  LocalFs         │  GoogleDriveFs                   │
@@ -103,7 +113,7 @@ src/
 └──────────────────┴──────────────────────────────────┘
 ```
 
-**Dependency direction**: `main.ts` → `SyncService` → `engine/executor` → `IFileSystem`. The sync engine is unaware of which backend is in use.
+**Dependency direction**: `main.ts` → `BackendManager` → `IBackendProvider` → `IFileSystem`; `main.ts` → `SyncService` → `engine/executor` → `IFileSystem`. The sync engine is unaware of which backend is in use.
 
 ---
 
@@ -126,7 +136,7 @@ interface FileEntity {
 
 `backendMeta` stores backend-specific data (e.g., Drive `fileId`, `headRevisionId`). The sync engine only uses `path`, `mtime`, `size`, and `hash`; it transparently persists `backendMeta` in `SyncRecord` without interpreting its contents.
 
-### SyncRecord (`fs/types.ts`)
+### SyncRecord (`sync/types.ts`)
 
 Records the state at the time of the last successful sync. Persisted in IndexedDB.
 
@@ -143,7 +153,7 @@ interface SyncRecord {
 }
 ```
 
-### MixedEntity (`fs/types.ts`)
+### MixedEntity (`sync/types.ts`)
 
 Input for 3-state comparison. Bundles the local, remote, and last sync states for a single file.
 
@@ -156,7 +166,7 @@ interface MixedEntity {
 }
 ```
 
-### SyncDecision (`fs/types.ts`)
+### SyncDecision (`sync/types.ts`)
 
 Output of `computeDecisions()`. The sync action for each file.
 
@@ -170,7 +180,7 @@ interface SyncDecision {
 }
 ```
 
-### DecisionType (`fs/types.ts`)
+### DecisionType (`sync/types.ts`)
 
 ```typescript
 type DecisionType =
@@ -188,7 +198,7 @@ type DecisionType =
   | "no_action";                  // No change
 ```
 
-### ConflictStrategy (`fs/types.ts`)
+### ConflictStrategy (`sync/types.ts`)
 
 ```typescript
 type ConflictStrategy =
@@ -217,6 +227,7 @@ interface IFileSystem {
   listDir(path: string): Promise<FileEntity[]>;
   delete(path: string): Promise<void>;
   rename(oldPath: string, newPath: string): Promise<void>;
+  close?(): Promise<void>;  // Release resources (optional)
 }
 ```
 
@@ -271,7 +282,7 @@ Renders backend-specific settings UI (configuration fields + connection flow). S
 ```typescript
 interface IBackendSettingsRenderer {
   readonly backendType: string;  // Must match IBackendProvider.type
-  render(containerEl: HTMLElement, settings: SmartSyncSettings, onSave: (updates) => Promise<void>, actions: BackendConnectionActions): void;
+  render(containerEl: HTMLElement, settings: SmartSyncSettings, onSave: (updates: Record<string, unknown>) => Promise<void>, actions: BackendConnectionActions): void;
 }
 ```
 
@@ -421,8 +432,7 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 | `listAllFiles(rootFolderId)` | Recursively enumerate all files with AsyncPool(3) concurrency |
 | `downloadFile(fileId)` | Download file content |
 | `uploadFile(...)` | Multipart upload (small files) |
-| `uploadFileResumable(...)` | Resumable upload (files > 5 MB) with resume-on-retry |
-| `clearResumeCache()` | Clear cached resume URLs (call on plugin unload) |
+| `uploadFileResumable(...)` | Delegates to `ResumableUploader` (files > 5 MB) with resume-on-retry |
 | `createFolder(name, parentId)` | Create a folder |
 | `updateFileMetadata(...)` | Update metadata (PATCH) |
 | `deleteFile(fileId, permanent)` | Delete file (trash or permanent) |
@@ -759,7 +769,13 @@ When no `SyncRecord` exists for a file:
 ### Test files
 
 - `src/fs/mock/mock-fs.test.ts` — All MockFs methods
-- `src/fs/googledrive/googledrive.test.ts` — GoogleDriveFs behavior
+- `src/fs/local/local-fs.test.ts` — LocalFs behavior
+- `src/fs/googledrive/index.test.ts` — GoogleDriveFs behavior
+- `src/fs/googledrive/auth.test.ts` — GoogleAuth OAuth + PKCE
+- `src/fs/googledrive/client.test.ts` — DriveClient API calls
+- `src/fs/googledrive/types.test.ts` — Drive type validators
+- `src/store/idb-helper.test.ts` — IDBHelper lifecycle & transactions
+- `src/store/metadata-store.test.ts` — MetadataStore CRUD
 - `src/queue/async-queue.test.ts` — AsyncMutex exclusion, AsyncPool concurrency
 - `src/sync/engine.test.ts` — computeDecisions decision table tests
 - `src/sync/engine-build.test.ts` — buildMixedEntities integration tests
