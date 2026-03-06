@@ -482,3 +482,93 @@ describe("SyncExecutor", () => {
 		expect(progressCalls[progressCalls.length - 1]!.completed).toBe(1);
 	});
 });
+
+describe("SyncExecutor — empty parent cleanup", () => {
+	let localFs: ReturnType<typeof createMockFs>;
+	let remoteFs: ReturnType<typeof createMockFs>;
+	let stateStore: ReturnType<typeof createMockStateStore>;
+
+	beforeEach(() => {
+		localFs = createMockFs("local");
+		remoteFs = createMockFs("remote");
+		stateStore = createMockStateStore();
+	});
+
+	function createExecutor() {
+		return new SyncExecutor({
+			localFs,
+			remoteFs,
+			stateStore: stateStore as unknown as SyncStateStore,
+			defaultStrategy: "keep_newer",
+			enableThreeWayMerge: false,
+		});
+	}
+
+	it("local_deleted_propagate: removes empty parent dirs on remote after delete", async () => {
+		const { entity, content } = makeFile("a/b/c.md", "hello");
+		remoteFs.files.set("a/b/c.md", { content, entity });
+		const dirB: FileEntity = { path: "a/b", isDirectory: true, size: 0, mtime: 0, hash: "" };
+		const dirA: FileEntity = { path: "a", isDirectory: true, size: 0, mtime: 0, hash: "" };
+		remoteFs.files.set("a/b", { content: new ArrayBuffer(0), entity: dirB });
+		remoteFs.files.set("a", { content: new ArrayBuffer(0), entity: dirA });
+		stateStore.records.set("a/b/c.md", {
+			path: "a/b/c.md", hash: "", localMtime: 1000, remoteMtime: 1000, localSize: 5, remoteSize: 5, syncedAt: 900,
+		});
+
+		const decisions: SyncDecision[] = [
+			{ path: "a/b/c.md", decision: "local_deleted_propagate", remote: entity, prevSync: stateStore.records.get("a/b/c.md") },
+		];
+
+		const executor = createExecutor();
+		await executor.execute(decisions);
+
+		expect(remoteFs.files.has("a/b/c.md")).toBe(false);
+		expect(remoteFs.files.has("a/b")).toBe(false);
+		expect(remoteFs.files.has("a")).toBe(false);
+	});
+
+	it("stops climbing when a parent dir is not empty", async () => {
+		const { entity: fileEntity, content: fileContent } = makeFile("a/b/c.md", "gone");
+		const { entity: siblingEntity, content: siblingContent } = makeFile("a/other.md", "keep");
+		remoteFs.files.set("a/b/c.md", { content: fileContent, entity: fileEntity });
+		remoteFs.files.set("a/other.md", { content: siblingContent, entity: siblingEntity });
+		const dirB: FileEntity = { path: "a/b", isDirectory: true, size: 0, mtime: 0, hash: "" };
+		const dirA: FileEntity = { path: "a", isDirectory: true, size: 0, mtime: 0, hash: "" };
+		remoteFs.files.set("a/b", { content: new ArrayBuffer(0), entity: dirB });
+		remoteFs.files.set("a", { content: new ArrayBuffer(0), entity: dirA });
+		stateStore.records.set("a/b/c.md", {
+			path: "a/b/c.md", hash: "", localMtime: 1000, remoteMtime: 1000, localSize: 4, remoteSize: 4, syncedAt: 900,
+		});
+
+		const decisions: SyncDecision[] = [
+			{ path: "a/b/c.md", decision: "local_deleted_propagate", remote: fileEntity, prevSync: stateStore.records.get("a/b/c.md") },
+		];
+
+		const executor = createExecutor();
+		await executor.execute(decisions);
+
+		expect(remoteFs.files.has("a/b/c.md")).toBe(false);
+		expect(remoteFs.files.has("a/b")).toBe(false);
+		// "a" still has "a/other.md" so should NOT be deleted
+		expect(remoteFs.files.has("a")).toBe(true);
+		expect(remoteFs.files.has("a/other.md")).toBe(true);
+	});
+
+	it("handles root-level file deletion without error", async () => {
+		const { entity, content } = makeFile("root.md", "data");
+		remoteFs.files.set("root.md", { content, entity });
+		stateStore.records.set("root.md", {
+			path: "root.md", hash: "", localMtime: 1000, remoteMtime: 1000, localSize: 4, remoteSize: 4, syncedAt: 900,
+		});
+
+		const decisions: SyncDecision[] = [
+			{ path: "root.md", decision: "local_deleted_propagate", remote: entity, prevSync: stateStore.records.get("root.md") },
+		];
+
+		const executor = createExecutor();
+		const result = await executor.execute(decisions);
+
+		expect(result.pushed).toBe(1);
+		expect(remoteFs.files.has("root.md")).toBe(false);
+	});
+});

@@ -294,4 +294,26 @@ describe("MockFs", () => {
 			expect(fs.has("a.txt")).toBe(false);
 		});
 	});
+
+	describe("listDir", () => {
+		it("returns immediate children only", async () => {
+			fs.seed("dir/a.txt", "aaa");
+			fs.seed("dir/b.txt", "bbb");
+			fs.seed("dir/sub/c.txt", "ccc");
+			const children = await fs.listDir("dir");
+			const paths = children.map((c) => c.path).sort();
+			expect(paths).toEqual(["dir/a.txt", "dir/b.txt", "dir/sub"]);
+		});
+
+		it("returns empty array for empty directory", async () => {
+			await fs.mkdir("empty");
+			const children = await fs.listDir("empty");
+			expect(children).toEqual([]);
+		});
+
+		it("returns empty array for non-existent directory", async () => {
+			const children = await fs.listDir("nope");
+			expect(children).toEqual([]);
+		});
+	});
 });

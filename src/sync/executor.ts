@@ -173,6 +173,7 @@ export class SyncExecutor {
 				}
 				await this.remoteFs.delete(path);
 				await this.stateStore.delete(path);
+				await this.removeEmptyParents(this.remoteFs, path);
 				result.pushed++;
 				break;
 			}
@@ -257,6 +258,20 @@ export class SyncExecutor {
 
 			case "no_action":
 				break;
+		}
+	}
+
+	/**
+	 * Walk up from a deleted file's path and remove each parent directory
+	 * that is now empty, stopping at the sync root.
+	 */
+	private async removeEmptyParents(fs: IFileSystem, filePath: string): Promise<void> {
+		let dir = filePath.substring(0, filePath.lastIndexOf("/"));
+		while (dir) {
+			const children = await fs.listDir(dir);
+			if (children.length > 0) break;
+			await fs.delete(dir);
+			dir = dir.substring(0, dir.lastIndexOf("/"));
 		}
 	}
 

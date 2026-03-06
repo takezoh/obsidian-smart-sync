@@ -441,6 +441,20 @@ export class GoogleDriveFs implements IFileSystem {
 		});
 	}
 
+	async listDir(path: string): Promise<FileEntity[]> {
+		return this.cacheMutex.run(async () => {
+			await this.ensureInitialized();
+			const prefix = path + "/";
+			const entities: FileEntity[] = [];
+			for (const [p, driveFile] of this.pathToFile) {
+				if (p.startsWith(prefix) && !p.substring(prefix.length).includes("/")) {
+					entities.push(this.driveFileToEntity(p, driveFile));
+				}
+			}
+			return entities;
+		});
+	}
+
 	async delete(path: string): Promise<void> {
 		// Phase 1: resolve fileId under mutex
 		const fileId = await this.cacheMutex.run(async () => {

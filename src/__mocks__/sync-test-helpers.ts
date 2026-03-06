@@ -23,6 +23,19 @@ export function createMockFs(name: string): IFileSystem & {
 			return entry.content;
 		},
 		async write(path: string, content: ArrayBuffer, mtime: number) {
+			// Ensure parent directories exist
+			const parentPath = path.substring(0, path.lastIndexOf("/"));
+			if (parentPath) {
+				const parts = parentPath.split("/");
+				let current = "";
+				for (const part of parts) {
+					current = current ? `${current}/${part}` : part;
+					if (!files.has(current)) {
+						const dirEntity: FileEntity = { path: current, isDirectory: true, size: 0, mtime: 0, hash: "" };
+						files.set(current, { content: new ArrayBuffer(0), entity: dirEntity });
+					}
+				}
+			}
 			const entity: FileEntity = {
 				path,
 				isDirectory: false,
@@ -34,10 +47,33 @@ export function createMockFs(name: string): IFileSystem & {
 			return entity;
 		},
 		async mkdir(path: string) {
-			return { path, isDirectory: true, size: 0, mtime: Date.now(), hash: "" };
+			const parts = path.split("/");
+			let current = "";
+			for (const part of parts) {
+				current = current ? `${current}/${part}` : part;
+				if (!files.has(current)) {
+					const entity: FileEntity = { path: current, isDirectory: true, size: 0, mtime: 0, hash: "" };
+					files.set(current, { content: new ArrayBuffer(0), entity });
+				}
+			}
+			return { path, isDirectory: true, size: 0, mtime: 0, hash: "" };
+		},
+		async listDir(dirPath: string) {
+			const prefix = dirPath + "/";
+			const entities: FileEntity[] = [];
+			for (const [p, f] of files) {
+				if (p.startsWith(prefix) && !p.substring(prefix.length).includes("/")) {
+					entities.push(f.entity);
+				}
+			}
+			return entities;
 		},
 		async delete(path: string) {
 			files.delete(path);
+			const prefix = path + "/";
+			for (const key of files.keys()) {
+				if (key.startsWith(prefix)) files.delete(key);
+			}
 		},
 		async rename(oldPath: string, newPath: string) {
 			const entry = files.get(oldPath);
@@ -89,6 +125,19 @@ export function addFile(
 	mtime = 1000
 ): FileEntity {
 	const buf = new TextEncoder().encode(text).buffer as ArrayBuffer;
+	// Ensure parent directories exist
+	const parentPath = path.substring(0, path.lastIndexOf("/"));
+	if (parentPath) {
+		const parts = parentPath.split("/");
+		let current = "";
+		for (const part of parts) {
+			current = current ? `${current}/${part}` : part;
+			if (!fs.files.has(current)) {
+				const dirEntity: FileEntity = { path: current, isDirectory: true, size: 0, mtime: 0, hash: "" };
+				fs.files.set(current, { content: new ArrayBuffer(0), entity: dirEntity });
+			}
+		}
+	}
 	const entity: FileEntity = { path, isDirectory: false, size: buf.byteLength, mtime, hash: "" };
 	fs.files.set(path, { content: buf, entity });
 	return entity;

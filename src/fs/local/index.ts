@@ -129,6 +129,24 @@ export class LocalFs implements IFileSystem {
 		return { path, isDirectory: true, size: 0, mtime: 0, hash: "" };
 	}
 
+	async listDir(path: string): Promise<FileEntity[]> {
+		path = normalizeSyncPath(path);
+		const folder = this.vault.getAbstractFileByPath(path);
+		if (!(folder instanceof TFolder)) return [];
+		return folder.children.map((child) => {
+			if (child instanceof TFile) {
+				return {
+					path: child.path,
+					isDirectory: false,
+					size: child.stat.size,
+					mtime: child.stat.mtime,
+					hash: "",
+				};
+			}
+			return { path: child.path, isDirectory: true, size: 0, mtime: 0, hash: "" };
+		});
+	}
+
 	async delete(path: string): Promise<void> {
 		path = normalizeSyncPath(path);
 		if (this.isDotSyncPath(path)) {

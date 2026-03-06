@@ -105,6 +105,24 @@ export class MockFs implements IFileSystem {
 		return { path, isDirectory: true, size: 0, mtime: 0, hash: "" };
 	}
 
+	async listDir(path: string): Promise<FileEntity[]> {
+		path = normalizeSyncPath(path);
+		const prefix = path + "/";
+		const entities: FileEntity[] = [];
+		for (const [p, file] of this.files) {
+			if (p.startsWith(prefix) && !p.substring(prefix.length).includes("/")) {
+				entities.push({
+					path: p,
+					isDirectory: file.isDirectory,
+					size: file.content.byteLength,
+					mtime: file.mtime,
+					hash: "",
+				});
+			}
+		}
+		return entities;
+	}
+
 	async delete(path: string): Promise<void> {
 		path = normalizeSyncPath(path);
 		// Delete the path and all children

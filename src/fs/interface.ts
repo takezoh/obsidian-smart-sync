@@ -53,6 +53,14 @@ export interface IFileSystem {
 	mkdir(path: string): Promise<FileEntity>;
 
 	/**
+	 * List immediate children of a directory.
+	 *
+	 * Returns an empty array if the directory is empty or does not exist.
+	 * Only returns direct children — not recursive.
+	 */
+	listDir(path: string): Promise<FileEntity[]>;
+
+	/**
 	 * Delete a file or directory (including children).
 	 *
 	 * Idempotent — deleting a non-existent path is a no-op.
