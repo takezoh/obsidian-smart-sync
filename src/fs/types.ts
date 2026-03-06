@@ -62,6 +62,7 @@ export type DecisionType =
 	| "remote_modified_pull"
 	| "local_deleted_propagate"
 	| "remote_deleted_propagate"
+	| "initial_match"
 	| "conflict_both_modified"
 	| "conflict_both_created"
 	| "conflict_delete_vs_modify"

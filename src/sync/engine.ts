@@ -93,7 +93,7 @@ function computeDecision(entity: MixedEntity): SyncDecision {
 		if (local?.hash && remote?.hash &&
 			local.hash === remote.hash &&
 			local.size === remote.size) {
-			return { ...base, decision: "no_action" };
+			return { ...base, decision: "initial_match" };
 		}
 		return { ...base, decision: "conflict_both_created" };
 	}

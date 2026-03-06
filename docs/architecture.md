@@ -286,7 +286,7 @@ To add a backend: implement `IAuthProvider` + `IBackendProvider` in `fs/<backend
 | Exists | Missing | None | `local_created_push` |
 | Missing | Exists | None | `remote_created_pull` |
 | Exists | Exists | None (different content) | `conflict_both_created` |
-| Exists | Exists | None (identical hash+size) | `no_action` |
+| Exists | Exists | None (identical hash+size) | `initial_match` |
 | Missing | Missing | Exists | `both_deleted_cleanup` |
 
 ### Change detection strategy (`sync/engine.ts`)
@@ -693,7 +693,7 @@ Resumable download cannot be implemented due to two Obsidian API limitations:
 ### Initial sync flow
 
 When no `SyncRecord` exists for a file:
-- Present on both sides with identical hash+size → `no_action`
+- Present on both sides with identical hash+size → `initial_match` (seeds a `SyncRecord` without file I/O, so that subsequent deletions on either side are correctly detected as `remote_deleted_propagate` or `local_deleted_propagate`)
 - Present on both sides with different content → `conflict_both_created`
 - Present only locally → `local_created_push`
 - Present only remotely → `remote_created_pull`

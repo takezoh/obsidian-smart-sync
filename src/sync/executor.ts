@@ -256,6 +256,21 @@ export class SyncExecutor {
 				break;
 			}
 
+			case "initial_match": {
+				const record: SyncRecord = {
+					path,
+					hash: decision.local!.hash ?? decision.remote!.hash ?? "",
+					localMtime: decision.local!.mtime,
+					remoteMtime: decision.remote!.mtime,
+					localSize: decision.local!.size,
+					remoteSize: decision.remote!.size,
+					backendMeta: decision.remote!.backendMeta,
+					syncedAt: Date.now(),
+				};
+				await this.stateStore.put(record);
+				break;
+			}
+
 			case "no_action":
 				break;
 		}

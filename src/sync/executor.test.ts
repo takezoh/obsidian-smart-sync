@@ -146,6 +146,73 @@ describe("SyncExecutor", () => {
 		expect(stateStore.records.has("gone.md")).toBe(false);
 	});
 
+	it("initial_match: seeds SyncRecord without file I/O", async () => {
+		const localEntity: FileEntity = {
+			path: "matched.md", isDirectory: false, size: 100, mtime: 1000, hash: "samehash",
+		};
+		const remoteEntity: FileEntity = {
+			path: "matched.md", isDirectory: false, size: 100, mtime: 2000, hash: "samehash",
+			backendMeta: { id: "drive-id-1" },
+		};
+
+		const decisions: SyncDecision[] = [
+			{
+				path: "matched.md",
+				decision: "initial_match",
+				local: localEntity,
+				remote: remoteEntity,
+			},
+		];
+
+		const executor = createExecutor();
+		const result = await executor.execute(decisions);
+
+		expect(result.pushed).toBe(0);
+		expect(result.pulled).toBe(0);
+		expect(result.conflicts).toBe(0);
+		expect(result.errors).toHaveLength(0);
+
+		const record = stateStore.records.get("matched.md");
+		expect(record).toBeDefined();
+		expect(record!.hash).toBe("samehash");
+		expect(record!.localMtime).toBe(1000);
+		expect(record!.remoteMtime).toBe(2000);
+		expect(record!.localSize).toBe(100);
+		expect(record!.remoteSize).toBe(100);
+		expect(record!.backendMeta).toEqual({ id: "drive-id-1" });
+	});
+
+	it("initial_match → remote delete → remote_deleted_propagate (integration)", async () => {
+		// Step 1: initial_match seeds SyncRecord
+		const localEntity: FileEntity = {
+			path: "will-delete.md", isDirectory: false, size: 50, mtime: 1000, hash: "hash1",
+		};
+		const remoteEntity: FileEntity = {
+			path: "will-delete.md", isDirectory: false, size: 50, mtime: 1000, hash: "hash1",
+		};
+		localFs.files.set("will-delete.md", {
+			content: new TextEncoder().encode("content").buffer as ArrayBuffer,
+			entity: localEntity,
+		});
+
+		const executor = createExecutor();
+		await executor.execute([
+			{ path: "will-delete.md", decision: "initial_match", local: localEntity, remote: remoteEntity },
+		]);
+
+		// SyncRecord should exist now
+		const record = stateStore.records.get("will-delete.md");
+		expect(record).toBeDefined();
+
+		// Step 2: Remote is deleted. With SyncRecord present, engine should decide remote_deleted_propagate.
+		// Simulate by importing computeDecisions
+		const { computeDecisions } = await import("./engine");
+		const decisions = computeDecisions([
+			{ path: "will-delete.md", local: localEntity, prevSync: record },
+		]);
+		expect(decisions[0]!.decision).toBe("remote_deleted_propagate");
+	});
+
 	it("no_action: is filtered out and does not execute", async () => {
 		const decisions: SyncDecision[] = [
 			{ path: "unchanged.md", decision: "no_action" },

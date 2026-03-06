@@ -114,7 +114,7 @@ describe("computeDecisions — 3-state decision table", () => {
 		expect(decisions[0]!.decision).toBe("conflict_both_created");
 	});
 
-	it("no_action: both created with identical hash and size", () => {
+	it("initial_match: both created with identical hash and size, no prevSync", () => {
 		const entities: MixedEntity[] = [
 			{
 				path: "same.md",
@@ -123,7 +123,7 @@ describe("computeDecisions — 3-state decision table", () => {
 			},
 		];
 		const decisions = computeDecisions(entities);
-		expect(decisions[0]!.decision).toBe("no_action");
+		expect(decisions[0]!.decision).toBe("initial_match");
 	});
 
 	it("conflict_both_created: both created with different hash", () => {
