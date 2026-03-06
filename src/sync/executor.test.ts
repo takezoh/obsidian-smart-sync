@@ -550,6 +550,120 @@ describe("SyncExecutor", () => {
 	});
 });
 
+describe("SyncExecutor — parallel execution", () => {
+	let localFs: ReturnType<typeof createMockFs>;
+	let remoteFs: ReturnType<typeof createMockFs>;
+	let stateStore: ReturnType<typeof createMockStateStore>;
+
+	beforeEach(() => {
+		localFs = createMockFs("local");
+		remoteFs = createMockFs("remote");
+		stateStore = createMockStateStore();
+	});
+
+	function createExecutor(onProgress?: (p: { total: number; completed: number; currentPath: string }) => void) {
+		return new SyncExecutor({
+			localFs,
+			remoteFs,
+			stateStore: stateStore as unknown as SyncStateStore,
+			defaultStrategy: "keep_newer",
+			enableThreeWayMerge: false,
+			onProgress,
+		});
+	}
+
+	it("parallel-safe decisions run concurrently", async () => {
+		// Add delays to mock FS to observe concurrency
+		const originalRead = localFs.read.bind(localFs);
+		localFs.read = async (path: string) => {
+			await new Promise((r) => setTimeout(r, 50));
+			return originalRead(path);
+		};
+
+		for (const name of ["a.md", "b.md", "c.md"]) {
+			const { entity, content } = makeFile(name, `content-${name}`);
+			localFs.files.set(name, { content, entity });
+		}
+
+		const decisions = ["a.md", "b.md", "c.md"].map((name) => ({
+			path: name,
+			decision: "local_created_push" as const,
+			local: localFs.files.get(name)!.entity,
+		}));
+
+		const executor = createExecutor();
+		const start = Date.now();
+		const result = await executor.execute(decisions);
+		const elapsed = Date.now() - start;
+
+		expect(result.pushed).toBe(3);
+		// 3 tasks × 50ms sequential = 150ms. With concurrency=3 should be ~50ms.
+		expect(elapsed).toBeLessThan(120);
+	});
+
+	it("local_deleted_propagate runs after parallel-safe decisions", async () => {
+		const order: string[] = [];
+
+		// Track execution order via mock side effects
+		const originalDelete = remoteFs.delete.bind(remoteFs);
+		remoteFs.delete = async (path: string) => {
+			order.push(`delete:${path}`);
+			return originalDelete(path);
+		};
+		const originalWrite = remoteFs.write.bind(remoteFs);
+		remoteFs.write = async (path: string, content: ArrayBuffer, mtime: number) => {
+			order.push(`write:${path}`);
+			return originalWrite(path, content, mtime);
+		};
+
+		// Push decision
+		const { entity: pushEntity, content: pushContent } = makeFile("push.md", "push");
+		localFs.files.set("push.md", { content: pushContent, entity: pushEntity });
+
+		// Delete decision
+		const { entity: delEntity, content: delContent } = makeFile("del.md", "del");
+		remoteFs.files.set("del.md", { content: delContent, entity: delEntity });
+		stateStore.records.set("del.md", {
+			path: "del.md", hash: "", localMtime: 1000, remoteMtime: 1000, localSize: 3, remoteSize: 3, syncedAt: 900,
+		});
+
+		const decisions = [
+			{ path: "del.md", decision: "local_deleted_propagate" as const, remote: delEntity, prevSync: stateStore.records.get("del.md") },
+			{ path: "push.md", decision: "local_created_push" as const, local: pushEntity },
+		];
+
+		const executor = createExecutor();
+		await executor.execute(decisions);
+
+		// push.md (parallel-safe) should execute before del.md (serial delete)
+		const writeIdx = order.indexOf("write:push.md");
+		const deleteIdx = order.indexOf("delete:del.md");
+		expect(writeIdx).toBeLessThan(deleteIdx);
+	});
+
+	it("progress reports monotonically increasing completed count", async () => {
+		for (const name of ["x.md", "y.md"]) {
+			const { entity, content } = makeFile(name, name);
+			localFs.files.set(name, { content, entity });
+		}
+
+		const completedValues: number[] = [];
+		const executor = createExecutor((p) => completedValues.push(p.completed));
+
+		await executor.execute([
+			{ path: "x.md", decision: "local_created_push", local: localFs.files.get("x.md")!.entity },
+			{ path: "y.md", decision: "local_created_push", local: localFs.files.get("y.md")!.entity },
+		]);
+
+		// Final call should report total completed
+		expect(completedValues[completedValues.length - 1]).toBe(2);
+		// All values should be non-decreasing
+		for (let i = 1; i < completedValues.length; i++) {
+			expect(completedValues[i]!).toBeGreaterThanOrEqual(completedValues[i - 1]!);
+		}
+	});
+});
+
 describe("SyncExecutor — empty parent cleanup", () => {
 	let localFs: ReturnType<typeof createMockFs>;
 	let remoteFs: ReturnType<typeof createMockFs>;

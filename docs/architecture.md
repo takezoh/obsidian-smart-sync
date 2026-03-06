@@ -40,7 +40,7 @@ src/
 ├── logging/
 │   └── logger.ts                   # Logger — structured logging to vault files
 ├── queue/
-│   └── async-queue.ts              # AsyncMutex — promise-based mutual exclusion
+│   └── async-queue.ts              # AsyncMutex + AsyncPool — concurrency primitives
 ├── utils/
 │   ├── hash.ts                     # sha256() — Web Crypto API
 │   ├── glob.ts                     # matchGlob() — glob pattern matching (regex conversion + cache)
@@ -351,6 +351,16 @@ Receives a list of `SyncDecision`s and executes the corresponding IFileSystem op
 - **Delete propagation**: With TOCTOU guard — re-checks via `stat()` before deleting; skips if the other side has changed. After deleting on the remote side (`local_deleted_propagate`), `removeEmptyParents()` walks up the directory tree via `listDir()` and removes empty parent directories
 - **Conflicts**: Delegates to `resolveConflict()`. Can invoke UI (ConflictModal) via `onConflict` callback
 
+**3-phase execution**: Decisions are partitioned into three groups and executed in order:
+
+| Phase | Decisions | Execution | Rationale |
+|-------|-----------|-----------|-----------|
+| A | push, pull, `initial_match`, `both_deleted_cleanup`, `remote_deleted_propagate` | `AsyncPool(3)` — up to 3 concurrent | Path-independent, side effects scoped to own path |
+| B | `local_deleted_propagate` | Sequential | `removeEmptyParents()` walks shared parent directories — concurrent deletes in the same tree would race |
+| C | `conflict_*` | Sequential | `onConflict` callback may show UI modals |
+
+Each decision operates on a unique path (at most one decision per path per sync), so Phase A tasks never contend on the same file. `SyncResult` counter mutations (`result.pushed++`) are safe because JavaScript is single-threaded — only I/O is concurrent, not computation.
+
 **Per-file errors**: `executeOne()` is wrapped in try/catch. On error, SyncRecord is **not** updated — the file remains in its pre-sync state and will be re-evaluated on the next sync cycle.
 
 **Result tracking**: Counts for `pushed`, `pulled`, `conflicts` + `mergeConflictPaths` (files with inserted markers) + `errors` (failed paths)
@@ -525,7 +535,6 @@ Lightweight promise-based mutex. Replaces error-prone boolean flag exclusion wit
 
 ```typescript
 class AsyncMutex {
-  async acquire(): Promise<() => void>;  // Acquire lock, returns release function
   async run<T>(fn: () => Promise<T>): Promise<T>;  // Hold lock during fn execution
   get isLocked(): boolean;
 }
@@ -536,6 +545,20 @@ class AsyncMutex {
 - `GoogleDriveFs.cacheMutex` — Protects Drive metadata cache
 
 **Note**: Non-reentrant. Calling `run()` inside `run()` will deadlock.
+
+### AsyncPool (`queue/async-queue.ts`)
+
+Bounded concurrency pool. Allows up to N tasks to run simultaneously; additional tasks wait for a slot.
+
+```typescript
+class AsyncPool {
+  constructor(concurrency: number);
+  async run<T>(fn: () => Promise<T>): Promise<T>;
+}
+```
+
+**Usage**:
+- `SyncExecutor.execute()` — Runs parallel-safe decisions (push/pull) with concurrency 3
 
 ---
 
@@ -660,11 +683,7 @@ These filters are applied **after** `excludePatterns` — a file excluded by `ex
 
 ### SyncExecutor execution model
 
-`SyncExecutor` processes decisions **sequentially** (`for` + `await`). This is intentional:
-
-- Avoids Drive API rate limits during initial sync with many files
-- Simplifies error handling and progress reporting
-- Trade-off: initial sync of large vaults is slower but more reliable
+`SyncExecutor` partitions decisions into 3 phases: parallel-safe (push/pull/cleanup), serial deletes (`local_deleted_propagate`), and serial conflicts. Phase A uses `AsyncPool(3)` for bounded concurrency — conservative enough to avoid Drive API rate limits while improving throughput for multi-file syncs. Phases B and C remain sequential: B because `removeEmptyParents()` races on shared directory trees, C because conflict resolution may show UI modals.
 
 ### Empty hash handling
 
@@ -734,11 +753,11 @@ When no `SyncRecord` exists for a file:
 
 - `src/fs/mock/mock-fs.test.ts` — All MockFs methods
 - `src/fs/googledrive/googledrive.test.ts` — GoogleDriveFs behavior
-- `src/queue/async-queue.test.ts` — AsyncMutex exclusion
+- `src/queue/async-queue.test.ts` — AsyncMutex exclusion, AsyncPool concurrency
 - `src/sync/engine.test.ts` — computeDecisions decision table tests
 - `src/sync/engine-build.test.ts` — buildMixedEntities integration tests
 - `src/sync/conflict.test.ts` — All conflict resolution strategy patterns
-- `src/sync/executor.test.ts` — SyncExecutor operations
+- `src/sync/executor.test.ts` — SyncExecutor operations, parallel execution phases
 - `src/sync/merge.test.ts` — 3-way merge (clean merge, conflicts, eligibility)
 - `src/sync/service.test.ts` — SyncService orchestration
 - `src/sync/state.test.ts` — IndexedDB store CRUD

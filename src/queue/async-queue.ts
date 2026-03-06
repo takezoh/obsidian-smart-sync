@@ -57,3 +57,34 @@ export class AsyncMutex {
 		return this.locked;
 	}
 }
+
+/**
+ * Promise-based concurrency pool.
+ *
+ * Allows up to `concurrency` tasks to run simultaneously.
+ * Additional tasks wait until a slot becomes available.
+ */
+export class AsyncPool {
+	private running = 0;
+	private waiting: (() => void)[] = [];
+
+	constructor(private readonly concurrency: number) {
+		if (concurrency < 1) {
+			throw new Error("AsyncPool: concurrency must be at least 1");
+		}
+	}
+
+	async run<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.running >= this.concurrency) {
+			await new Promise<void>((resolve) => this.waiting.push(resolve));
+		}
+		this.running++;
+		try {
+			return await fn();
+		} finally {
+			this.running--;
+			const next = this.waiting.shift();
+			if (next) next();
+		}
+	}
+}

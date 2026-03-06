@@ -4,6 +4,7 @@ import type { SyncStateStore } from "./state";
 import type { Logger } from "../logging/logger";
 import { resolveConflict, buildSyncRecord } from "./conflict";
 import { isMergeEligible } from "./merge";
+import { AsyncPool } from "../queue/async-queue";
 
 export interface SyncProgress {
 	total: number;
@@ -82,14 +83,26 @@ export class SyncExecutor {
 			errors: [],
 		};
 
-		for (let i = 0; i < actionable.length; i++) {
-			const decision = actionable[i]!;
-			this.onProgress?.({
-				total: actionable.length,
-				completed: i,
-				currentPath: decision.path,
-			});
+		// Partition decisions into three groups by execution constraints
+		const parallelSafe: SyncDecision[] = [];
+		const serialDeletes: SyncDecision[] = [];
+		const conflicts: SyncDecision[] = [];
 
+		for (const d of actionable) {
+			if (d.decision.startsWith("conflict_")) {
+				conflicts.push(d);
+			} else if (d.decision === "local_deleted_propagate") {
+				serialDeletes.push(d);
+			} else {
+				parallelSafe.push(d);
+			}
+		}
+
+		let completed = 0;
+		const total = actionable.length;
+
+		const executeWithProgress = async (decision: SyncDecision): Promise<void> => {
+			this.onProgress?.({ total, completed, currentPath: decision.path });
 			try {
 				await this.executeOne(decision, result);
 			} catch (err) {
@@ -97,11 +110,28 @@ export class SyncExecutor {
 				result.errors.push(`${decision.path}: ${msg}`);
 				this.logger?.error("File sync failed", { path: decision.path, decision: decision.decision, error: msg });
 			}
+			completed++;
+		};
+
+		// Phase A: parallel-safe decisions (push, pull, initial_match, etc.)
+		const pool = new AsyncPool(3);
+		await Promise.all(
+			parallelSafe.map((d) => pool.run(() => executeWithProgress(d)))
+		);
+
+		// Phase B: local_deleted_propagate (removeEmptyParents may race)
+		for (const d of serialDeletes) {
+			await executeWithProgress(d);
+		}
+
+		// Phase C: conflicts (may show UI modals)
+		for (const d of conflicts) {
+			await executeWithProgress(d);
 		}
 
 		this.onProgress?.({
-			total: actionable.length,
-			completed: actionable.length,
+			total,
+			completed: total,
 			currentPath: "",
 		});
 

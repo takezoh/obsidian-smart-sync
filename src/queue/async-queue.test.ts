@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AsyncMutex } from "./async-queue";
+import { AsyncMutex, AsyncPool } from "./async-queue";
 
 /** Helper that creates a promise resolvable from outside */
 function deferred<T = void>() {
@@ -113,5 +113,65 @@ describe("AsyncMutex", () => {
 		await Promise.all(promises);
 		expect(order).toEqual(Array.from({ length: count }, (_, i) => i));
 		expect(mutex.isLocked).toBe(false);
+	});
+});
+
+describe("AsyncPool", () => {
+	it("throws when concurrency is less than 1", () => {
+		expect(() => new AsyncPool(0)).toThrow("concurrency must be at least 1");
+		expect(() => new AsyncPool(-1)).toThrow("concurrency must be at least 1");
+	});
+
+	it("returns the callback value", async () => {
+		const pool = new AsyncPool(2);
+		const result = await pool.run(() => Promise.resolve(42));
+		expect(result).toBe(42);
+	});
+
+	it("respects concurrency limit", async () => {
+		const pool = new AsyncPool(2);
+		let running = 0;
+		let maxRunning = 0;
+
+		const task = async () => {
+			running++;
+			maxRunning = Math.max(maxRunning, running);
+			await new Promise((r) => setTimeout(r, 10));
+			running--;
+		};
+
+		await Promise.all(
+			Array.from({ length: 5 }, () => pool.run(task))
+		);
+
+		expect(maxRunning).toBe(2);
+	});
+
+	it("propagates errors without breaking the pool", async () => {
+		const pool = new AsyncPool(2);
+
+		await expect(
+			pool.run(() => Promise.reject(new Error("boom")))
+		).rejects.toThrow("boom");
+
+		// Pool should still work after error
+		const result = await pool.run(() => Promise.resolve("ok"));
+		expect(result).toBe("ok");
+	});
+
+	it("all tasks complete even when some fail", async () => {
+		const pool = new AsyncPool(2);
+		const completed: number[] = [];
+
+		const promises = [0, 1, 2, 3].map((i) =>
+			pool.run(async () => {
+				if (i === 1) throw new Error("fail");
+				completed.push(i);
+			}).catch(() => { /* swallow */ })
+		);
+
+		await Promise.all(promises);
+		expect(completed).toEqual(expect.arrayContaining([0, 2, 3]));
+		expect(completed).toHaveLength(3);
 	});
 });
