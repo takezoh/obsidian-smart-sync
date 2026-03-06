@@ -1,4 +1,5 @@
 import type { SyncRecord } from "../fs/types";
+import { IDBHelper, sanitizeDbName } from "../store/idb-helper";
 
 const DB_NAME_PREFIX = "smart-sync";
 const STORE_NAME = "sync-records";
@@ -7,198 +8,95 @@ const DB_VERSION = 3;
 
 /** Persistent store for sync records using IndexedDB */
 export class SyncStateStore {
-	private db: IDBDatabase | null = null;
-	private openPromise: Promise<void> | null = null;
-	private dbName: string;
+	private helper: IDBHelper;
 
 	constructor(vaultId: string) {
-		this.dbName = `${DB_NAME_PREFIX}-${sanitizeDbName(vaultId)}`;
-	}
-
-	async open(): Promise<void> {
-		if (this.db) return;
-		if (this.openPromise) return this.openPromise;
-		this.openPromise = this.doOpen();
-		try {
-			await this.openPromise;
-		} catch (err) {
-			this.openPromise = null;
-			throw err;
-		}
-	}
-
-	private async doOpen(): Promise<void> {
-		this.db = await new Promise<IDBDatabase>((resolve, reject) => {
-			const request = indexedDB.open(this.dbName, DB_VERSION);
-			request.onblocked = () => {
-				reject(new Error(`IndexedDB "${this.dbName}" is blocked by another connection`));
-			};
-			request.onupgradeneeded = (event) => {
-				const db = request.result;
-				const oldVersion = event.oldVersion;
-
+		this.helper = new IDBHelper({
+			dbName: `${DB_NAME_PREFIX}-${sanitizeDbName(vaultId)}`,
+			version: DB_VERSION,
+			onUpgrade: (db, oldVersion) => {
 				// Drop and recreate stores on schema-breaking upgrades (v2→v3: size → localSize/remoteSize)
 				if (oldVersion > 0) {
 					for (const name of Array.from(db.objectStoreNames)) {
 						db.deleteObjectStore(name);
 					}
 				}
-
 				if (!db.objectStoreNames.contains(STORE_NAME)) {
 					db.createObjectStore(STORE_NAME, { keyPath: "path" });
 				}
 				if (!db.objectStoreNames.contains(CONTENT_STORE_NAME)) {
 					db.createObjectStore(CONTENT_STORE_NAME, { keyPath: "path" });
 				}
-			};
-			request.onsuccess = () => resolve(request.result);
-			request.onerror = () =>
-				reject(new Error(`Failed to open IndexedDB: ${request.error?.message ?? "unknown"}`));
+			},
 		});
-		this.db.onversionchange = () => {
-			this.db?.close();
-			this.db = null;
-			this.openPromise = null;
-		};
 	}
 
-	/** Get a valid DB handle, re-opening if closed by onversionchange */
-	private async getDb(): Promise<IDBDatabase> {
-		await this.open();
-		if (!this.db) {
-			// onversionchange fired during open — retry once
-			this.openPromise = null;
-			await this.open();
-		}
-		if (!this.db) {
-			throw new Error("IndexedDB unavailable after re-open attempt");
-		}
-		return this.db;
+	async open(): Promise<void> {
+		await this.helper.open();
 	}
 
 	async close(): Promise<void> {
-		if (this.openPromise) {
-			try {
-				await this.openPromise;
-			} catch {
-				// open failed — nothing to close
-			}
-		}
-		if (this.db) {
-			this.db.close();
-			this.db = null;
-		}
-		this.openPromise = null;
+		await this.helper.close();
 	}
 
 	/** Get a sync record by path */
 	async get(path: string): Promise<SyncRecord | undefined> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE_NAME, "readonly");
-			const store = tx.objectStore(STORE_NAME);
-			const request = store.get(path);
-			request.onsuccess = () => resolve(request.result as SyncRecord | undefined);
-			request.onerror = () =>
-				reject(new Error(`Failed to get record: ${request.error?.message ?? "unknown"}`));
+		return this.helper.runTransaction(STORE_NAME, "readonly", (tx) => {
+			const req = tx.objectStore(STORE_NAME).get(path);
+			return () => req.result as SyncRecord | undefined;
 		});
 	}
 
 	/** Get all sync records (without prevSyncContent for lightweight listing) */
 	async getAll(): Promise<SyncRecord[]> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE_NAME, "readonly");
-			const store = tx.objectStore(STORE_NAME);
-			const request = store.getAll();
-			request.onsuccess = () => resolve(request.result as SyncRecord[]);
-			request.onerror = () =>
-				reject(new Error(`Failed to get all records: ${request.error?.message ?? "unknown"}`));
+		return this.helper.runTransaction(STORE_NAME, "readonly", (tx) => {
+			const req = tx.objectStore(STORE_NAME).getAll();
+			return () => req.result as SyncRecord[];
 		});
 	}
 
 	/** Save or update a sync record */
 	async put(record: SyncRecord): Promise<void> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(STORE_NAME, "readwrite");
-			const store = tx.objectStore(STORE_NAME);
-			store.put(record);
-			tx.oncomplete = () => resolve();
-			tx.onerror = () =>
-				reject(new Error(`Failed to put record: ${tx.error?.message ?? "unknown"}`));
-			tx.onabort = () =>
-				reject(new Error(`Transaction aborted: ${tx.error?.message ?? "unknown"}`));
+		await this.helper.runTransaction(STORE_NAME, "readwrite", (tx) => {
+			tx.objectStore(STORE_NAME).put(record);
+			return () => {};
 		});
 	}
 
 	/** Delete a sync record by path */
 	async delete(path: string): Promise<void> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction([STORE_NAME, CONTENT_STORE_NAME], "readwrite");
-			const store = tx.objectStore(STORE_NAME);
-			const contentStore = tx.objectStore(CONTENT_STORE_NAME);
-			store.delete(path);
-			contentStore.delete(path);
-			tx.oncomplete = () => resolve();
-			tx.onerror = () =>
-				reject(new Error(`Failed to delete record: ${tx.error?.message ?? "unknown"}`));
-			tx.onabort = () =>
-				reject(new Error(`Transaction aborted: ${tx.error?.message ?? "unknown"}`));
+		await this.helper.runTransaction([STORE_NAME, CONTENT_STORE_NAME], "readwrite", (tx) => {
+			tx.objectStore(STORE_NAME).delete(path);
+			tx.objectStore(CONTENT_STORE_NAME).delete(path);
+			return () => {};
 		});
 	}
 
 	/** Clear all sync records and content */
 	async clear(): Promise<void> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction([STORE_NAME, CONTENT_STORE_NAME], "readwrite");
-			const store = tx.objectStore(STORE_NAME);
-			const contentStore = tx.objectStore(CONTENT_STORE_NAME);
-			store.clear();
-			contentStore.clear();
-			tx.oncomplete = () => resolve();
-			tx.onerror = () =>
-				reject(new Error(`Failed to clear records: ${tx.error?.message ?? "unknown"}`));
-			tx.onabort = () =>
-				reject(new Error(`Transaction aborted: ${tx.error?.message ?? "unknown"}`));
+		await this.helper.runTransaction([STORE_NAME, CONTENT_STORE_NAME], "readwrite", (tx) => {
+			tx.objectStore(STORE_NAME).clear();
+			tx.objectStore(CONTENT_STORE_NAME).clear();
+			return () => {};
 		});
 	}
 
 	/** Store prevSyncContent separately for a path */
 	async putContent(path: string, content: ArrayBuffer): Promise<void> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(CONTENT_STORE_NAME, "readwrite");
-			const store = tx.objectStore(CONTENT_STORE_NAME);
-			store.put({ path, content });
-			tx.oncomplete = () => resolve();
-			tx.onerror = () =>
-				reject(new Error(`Failed to put content: ${tx.error?.message ?? "unknown"}`));
-			tx.onabort = () =>
-				reject(new Error(`Transaction aborted: ${tx.error?.message ?? "unknown"}`));
+		await this.helper.runTransaction(CONTENT_STORE_NAME, "readwrite", (tx) => {
+			tx.objectStore(CONTENT_STORE_NAME).put({ path, content });
+			return () => {};
 		});
 	}
 
 	/** Get prevSyncContent for a path */
 	async getContent(path: string): Promise<ArrayBuffer | undefined> {
-		const db = await this.getDb();
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(CONTENT_STORE_NAME, "readonly");
-			const store = tx.objectStore(CONTENT_STORE_NAME);
-			const request = store.get(path);
-			request.onsuccess = () => {
-				const result = request.result as { path: string; content: ArrayBuffer } | undefined;
-				resolve(result?.content);
+		return this.helper.runTransaction(CONTENT_STORE_NAME, "readonly", (tx) => {
+			const req = tx.objectStore(CONTENT_STORE_NAME).get(path);
+			return () => {
+				const result = req.result as { path: string; content: ArrayBuffer } | undefined;
+				return result?.content;
 			};
-			request.onerror = () =>
-				reject(new Error(`Failed to get content: ${request.error?.message ?? "unknown"}`));
 		});
 	}
-}
-
-/** Sanitize a vault identifier for use as an IndexedDB name */
-function sanitizeDbName(name: string): string {
-	return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }

@@ -146,6 +146,7 @@ export default class SmartSyncPlugin extends Plugin {
 	onunload() {
 		void this.logger.flush();
 		this.logger.dispose();
+		void this.remoteFs?.close?.();
 		this.syncService.close().catch((e) => {
 			console.error("Smart Sync: failed to close sync service", e);
 			this.logger.error("Failed to close sync service", { message: e instanceof Error ? e.message : String(e) });
@@ -203,6 +204,8 @@ export default class SmartSyncPlugin extends Plugin {
 		this.backendProvider = provider;
 
 		try {
+			// Close old remoteFs before replacing
+			void this.remoteFs?.close?.();
 			if (provider.isConnected(this.settings)) {
 				this.remoteFs = provider.createFs(this.app, this.settings, this.logger);
 				if (this.remoteFs) {

@@ -148,10 +148,12 @@ describe("SyncStateStore", () => {
 		await store.put(makeRecord("a.md"));
 
 		// Simulate onversionchange: close db and null it out
-		const internal = store as unknown as { db: IDBDatabase | null; openPromise: Promise<void> | null };
-		internal.db?.close();
-		internal.db = null;
-		internal.openPromise = null;
+		const internal = store as unknown as {
+			helper: { db: IDBDatabase | null; openPromise: Promise<void> | null };
+		};
+		internal.helper.db?.close();
+		internal.helper.db = null;
+		internal.helper.openPromise = null;
 
 		// getDb() should re-open and recover
 		const result = await store.get("a.md");

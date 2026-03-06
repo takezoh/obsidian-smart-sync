@@ -85,4 +85,10 @@ export interface IFileSystem {
 	 * @throws if `newPath` already exists.
 	 */
 	rename(oldPath: string, newPath: string): Promise<void>;
+
+	/**
+	 * Release resources (e.g. close IndexedDB connections).
+	 * Called on plugin unload. Optional — not all backends need cleanup.
+	 */
+	close?(): Promise<void>;
 }
