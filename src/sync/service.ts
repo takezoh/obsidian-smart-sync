@@ -13,13 +13,6 @@ import type { Logger } from "../logging/logger";
 export type SyncStatus = "idle" | "syncing" | "error" | "partial_error" | "not_connected";
 const MAX_RETRIES = 3;
 
-/** Keys that readFsState() is allowed to write back to settings. */
-const FS_STATE_ALLOWED_KEYS: ReadonlyArray<keyof SmartSyncSettings> = [
-	"changesStartPageToken",
-	"accessToken",
-	"accessTokenExpiry",
-	"refreshToken",
-];
 
 export interface SyncServiceDeps {
 	getSettings: () => SmartSyncSettings;
@@ -275,15 +268,14 @@ export class SyncService {
 
 		const result = await executor.execute(decisions);
 
-		// Persist backend FS state (e.g. changes page token)
+		// Persist backend state (tokens, cursors, etc.) into backendData namespace
 		const provider = this.deps.backendProvider();
-		if (provider?.readFsState && remoteFs) {
-			const fsUpdates = provider.readFsState(remoteFs);
-			for (const key of FS_STATE_ALLOWED_KEYS) {
-				if (key in fsUpdates) {
-					(settings as unknown as Record<string, unknown>)[key] = fsUpdates[key];
-				}
-			}
+		if (provider?.readBackendState && remoteFs) {
+			const current = settings.backendData[provider.type] ?? {};
+			settings.backendData[provider.type] = {
+				...current,
+				...provider.readBackendState(remoteFs),
+			};
 		}
 		await this.deps.saveSettings();
 

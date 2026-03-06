@@ -27,8 +27,23 @@ export interface IBackendProvider {
 	isConnected(settings: SmartSyncSettings): boolean;
 
 	/**
-	 * Read updated internal state from the FS to persist in settings.
+	 * Read updated internal state from the FS to persist in settings.backendData.
 	 * Called after each sync cycle so backends can save tokens, cursors, etc.
+	 * Returns an opaque record — the sync layer does not inspect its contents.
 	 */
-	readFsState?(fs: IFileSystem): Partial<SmartSyncSettings>;
+	readBackendState?(fs: IFileSystem): Record<string, unknown>;
+
+	/**
+	 * Disconnect the backend: revoke auth and reset all backend state.
+	 * Returns the reset backendData to persist.
+	 */
+	disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>>;
+}
+
+/** Type-safe helper to retrieve backend-specific data from settings */
+export function getBackendData<T>(
+	settings: SmartSyncSettings,
+	type: string
+): T | undefined {
+	return settings.backendData[type] as T | undefined;
 }

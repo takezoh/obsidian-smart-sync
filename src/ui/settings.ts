@@ -205,11 +205,13 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 			.setName(`${provider?.displayName ?? "Backend"} connection`)
 			.setHeading();
 
+		const backendType = this.plugin.settings.backendType;
 		renderer.render(
 			containerEl,
 			this.plugin.settings,
 			async (updates) => {
-				Object.assign(this.plugin.settings, updates);
+				const current = this.plugin.settings.backendData[backendType] ?? {};
+				this.plugin.settings.backendData[backendType] = { ...current, ...updates };
 				await this.plugin.saveSettings();
 				this.plugin.initBackend();
 			},

@@ -232,8 +232,10 @@ export default class SmartSyncPlugin extends Plugin {
 			return;
 		}
 		try {
-			const updates = await this.backendProvider.auth.startAuth(this.app, this.settings);
-			Object.assign(this.settings, updates);
+			const type = this.backendProvider.type;
+			const updates = await this.backendProvider.auth.startAuth();
+			const current = this.settings.backendData[type] ?? {};
+			this.settings.backendData[type] = { ...current, ...updates };
 			await this.saveSettings();
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -249,11 +251,13 @@ export default class SmartSyncPlugin extends Plugin {
 		}
 
 		try {
+			const type = this.backendProvider.type;
+			const backendData = this.settings.backendData[type] ?? {};
 			const updates = await this.backendProvider.auth.completeAuth(
 				code,
-				this.settings
+				backendData
 			);
-			Object.assign(this.settings, updates);
+			this.settings.backendData[type] = { ...backendData, ...updates };
 			await this.saveSettings();
 
 			this.remoteFs = this.backendProvider.createFs(
@@ -281,8 +285,9 @@ export default class SmartSyncPlugin extends Plugin {
 	async disconnectBackend(): Promise<void> {
 		if (!this.backendProvider) return;
 
-		const updates = await this.backendProvider.auth.disconnect(this.settings);
-		Object.assign(this.settings, updates);
+		const type = this.backendProvider.type;
+		const resetData = await this.backendProvider.disconnect(this.settings);
+		this.settings.backendData[type] = resetData;
 		await this.saveSettings();
 
 		this.remoteFs = null;

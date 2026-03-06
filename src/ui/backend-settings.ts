@@ -21,7 +21,7 @@ export interface IBackendSettingsRenderer {
 	render(
 		containerEl: HTMLElement,
 		settings: SmartSyncSettings,
-		onSave: (updates: Partial<SmartSyncSettings>) => Promise<void>,
+		onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions
 	): void;
 }

@@ -23,23 +23,8 @@ export interface SmartSyncSettings {
 	/** Minimum log level to write */
 	logLevel: "debug" | "info" | "warn" | "error";
 
-	// --- Google Drive backend fields ---
-	// These live at the top level for simplicity. Each backend reads
-	// only the fields it needs; unknown fields are ignored.
-	/** Google Drive folder ID to sync with */
-	driveFolderId: string;
-	/** OAuth refresh token */
-	refreshToken: string;
-	/** OAuth access token (transient, cached) */
-	accessToken: string;
-	/** Access token expiry (Unix epoch ms) */
-	accessTokenExpiry: number;
-	/** Google Drive changes.list startPageToken for incremental sync */
-	changesStartPageToken: string;
-	/** Pending PKCE code verifier (survives plugin reload during auth flow) */
-	pendingCodeVerifier: string;
-	/** Pending auth state (survives plugin reload during auth flow) */
-	pendingAuthState: string;
+	/** Backend-specific data, keyed by backend type (e.g. "googledrive") */
+	backendData: Record<string, Record<string, unknown>>;
 }
 
 export const DEFAULT_SETTINGS: SmartSyncSettings = {
@@ -53,12 +38,6 @@ export const DEFAULT_SETTINGS: SmartSyncSettings = {
 	mobileMaxFileSizeMB: 10,
 	enableLogging: false,
 	logLevel: "info",
-	driveFolderId: "",
-	refreshToken: "",
-	accessToken: "",
-	accessTokenExpiry: 0,
-	changesStartPageToken: "",
-	pendingCodeVerifier: "",
-	pendingAuthState: "",
+	backendData: {},
 };
 

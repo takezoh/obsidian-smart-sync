@@ -4,6 +4,7 @@ import type {
 	BackendConnectionActions,
 	IBackendSettingsRenderer,
 } from "./backend-settings";
+import type { GoogleDriveBackendData } from "../fs/googledrive/provider";
 
 /**
  * Renders Google Drive-specific settings UI:
@@ -15,11 +16,13 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 	render(
 		containerEl: HTMLElement,
 		settings: SmartSyncSettings,
-		onSave: (updates: Partial<SmartSyncSettings>) => Promise<void>,
+		onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions
 	): void {
+		const data = (settings.backendData["googledrive"] ?? {}) as Partial<GoogleDriveBackendData>;
+
 		const debouncedSave = debounce(
-			(updates: Partial<SmartSyncSettings>) => {
+			(updates: Record<string, unknown>) => {
 				onSave(updates)
 					.then(() => actions.refreshDisplay())
 					.catch((err) => {
@@ -40,15 +43,15 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 				text
 					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					.setPlaceholder("e.g. 1AbCdEfGhIjKlMnOpQrStUvWxYz")
-					.setValue(settings.driveFolderId)
+					.setValue(data.driveFolderId ?? "")
 					.onChange((value) => {
 						debouncedSave({ driveFolderId: value });
 					})
 			);
 
-		// Connection status — derived from settings fields directly
-		const isAuthenticated = !!settings.refreshToken;
-		const isConnected = !!settings.refreshToken && !!settings.driveFolderId;
+		// Connection status — derived from backend data directly
+		const isAuthenticated = !!data.refreshToken;
+		const isConnected = !!data.refreshToken && !!data.driveFolderId;
 
 		let statusDesc: string;
 		let statusClass: string;

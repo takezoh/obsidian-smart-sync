@@ -15,15 +15,9 @@ function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSett
 		autoSyncIntervalMinutes: 0,
 		mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
 		mobileMaxFileSizeMB: 10,
-		driveFolderId: "",
-		refreshToken: "",
-		accessToken: "",
-		accessTokenExpiry: 0,
 		enableLogging: false,
 		logLevel: "info",
-		changesStartPageToken: "",
-		pendingCodeVerifier: "",
-		pendingAuthState: "",
+		backendData: {},
 		...overrides,
 	};
 }

@@ -233,12 +233,13 @@ Authentication provider interface — abstracts OAuth/credential lifecycle separ
 
 ```typescript
 interface IAuthProvider {
-  isAuthenticated(settings: SmartSyncSettings): boolean;
-  startAuth(app: App, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
-  completeAuth(input: string, settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
-  disconnect(settings: SmartSyncSettings): Promise<Partial<SmartSyncSettings>>;
+  isAuthenticated(backendData: Record<string, unknown>): boolean;
+  startAuth(): Promise<Record<string, unknown>>;
+  completeAuth(input: string, backendData: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 ```
+
+Auth methods receive/return opaque `Record<string, unknown>` scoped to the backend's own data namespace (`settings.backendData[type]`). `disconnect()` is on `IBackendProvider` instead, since it must reset both auth and FS state.
 
 ## IBackendProvider interface (`fs/backend.ts`)
 
@@ -251,11 +252,12 @@ interface IBackendProvider {
   readonly auth: IAuthProvider;
   createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
   isConnected(settings: SmartSyncSettings): boolean;
-  readFsState?(fs: IFileSystem): Partial<SmartSyncSettings>;  // Optional — not all backends have internal state to persist
+  readBackendState?(fs: IFileSystem): Record<string, unknown>;
+  disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>>;
 }
 ```
 
-`readFsState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens) back to settings. `SyncService` checks existence before calling (`provider?.readFsState && ...`). Google Drive uses it to save `changesStartPageToken`; a simpler backend (e.g., local-only or S3) may not need it.
+`readBackendState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens). `SyncService` checks existence before calling (`provider?.readBackendState && ...`). The returned opaque record is stored in `settings.backendData[provider.type]` — the sync layer never inspects its contents. `disconnect()` revokes auth and resets all backend state, returning the reset data to persist.
 
 ## IBackendSettingsRenderer interface (`ui/backend-settings.ts`)
 
@@ -433,14 +435,17 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 
 `IBackendProvider` implementation. Handles FS creation and state management. Authentication is delegated to `GoogleDriveAuthProvider` via composition (`this.auth`). Settings UI is handled separately by `GoogleDriveSettingsRenderer` in `ui/googledrive-settings.ts`.
 
-- `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(settings)` to obtain a `GoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
-- `readFsState()`: Read `changesStartPageToken` from `GoogleDriveFs` and save to settings
+- `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(data)` to obtain a `GoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
+- `readBackendState()`: Read `changesStartPageToken` + refreshed tokens from `GoogleDriveFs` and return as opaque record
+- `disconnect()`: Revoke auth tokens and return reset backend data (preserves `driveFolderId`)
+
+All Google Drive-specific data is stored in `settings.backendData["googledrive"]` as `GoogleDriveBackendData` (defined in `provider.ts`). The sync layer never accesses these fields directly.
 
 ### GoogleDriveSettingsRenderer (`ui/googledrive-settings.ts`)
 
 `IBackendSettingsRenderer` implementation. Renders Google Drive-specific settings: folder ID input, connection status indicator, and auth code flow.
 
-Connection state is derived directly from settings fields (`!!refreshToken`, `!!driveFolderId`) — no dependency on the provider instance. Button text and auth code input visibility are driven by `isAuthenticated` (token present) rather than `isConnected` (token + folder ID), so the UI correctly reflects the authenticated state before folder ID is configured. Folder ID changes trigger `refreshDisplay()` after save to keep the status indicator in sync.
+Connection state is derived from `settings.backendData["googledrive"]` (`!!refreshToken`, `!!driveFolderId`) — no dependency on the provider instance. Button text and auth code input visibility are driven by `isAuthenticated` (token present) rather than `isConnected` (token + folder ID), so the UI correctly reflects the authenticated state before folder ID is configured. Folder ID changes trigger `refreshDisplay()` after save to keep the status indicator in sync.
 
 ### GoogleDriveAuthProvider (`fs/googledrive/provider.ts`)
 

@@ -132,7 +132,7 @@ describe("parseAuthInput (via provider)", () => {
 		const provider = new GoogleDriveProvider();
 
 		await expect(
-			provider.auth.completeAuth("", {} as never)
+			provider.auth.completeAuth("", {})
 		).rejects.toThrow("Authorization code is empty");
 	});
 
@@ -141,7 +141,7 @@ describe("parseAuthInput (via provider)", () => {
 		const provider = new GoogleDriveProvider();
 
 		await expect(
-			provider.auth.completeAuth("   ", {} as never)
+			provider.auth.completeAuth("   ", {})
 		).rejects.toThrow("Authorization code is empty");
 	});
 });
@@ -302,10 +302,10 @@ describe("GoogleDriveProvider.completeAuth PKCE restoration", () => {
 		const provider = new GoogleDriveProvider();
 		const authInternal = provider.auth as unknown as GoogleDriveAuthProviderInternal;
 
-		const settings = {
+		const backendData = {
 			pendingCodeVerifier: "saved-verifier",
 			pendingAuthState: "saved-state",
-		} as never;
+		};
 
 		// Create a provider with an existing auth that has no PKCE state
 		authInternal.googleAuth = new GoogleAuth();
@@ -313,10 +313,10 @@ describe("GoogleDriveProvider.completeAuth PKCE restoration", () => {
 		// Verify auth initially has no PKCE state
 		expect(authInternal.googleAuth.getAuthState()).toBeNull();
 
-		// completeAuth should restore PKCE state from settings then exchange
+		// completeAuth should restore PKCE state from backendData then exchange
 		const result = await provider.auth.completeAuth(
 			"http://127.0.0.1/callback?code=test-code&state=saved-state",
-			settings
+			backendData
 		);
 
 		// exchangeCode should have succeeded (state matched after restoration)
@@ -342,16 +342,18 @@ describe("GoogleDriveAuthProvider.getOrCreateGoogleAuth", () => {
 		oldAuth.setTokens("old-refresh", "", 0);
 		authInternal.googleAuth = oldAuth;
 
-		const settings = {
+		const data = {
 			refreshToken: "new-refresh",
 			accessToken: "",
 			accessTokenExpiry: 0,
 			driveFolderId: "folder",
 			changesStartPageToken: "",
-		} as never;
+			pendingCodeVerifier: "",
+			pendingAuthState: "",
+		};
 
 		// The refreshToken mismatch should create a new auth instance
-		const auth = provider.auth.getOrCreateGoogleAuth(settings);
+		const auth = provider.auth.getOrCreateGoogleAuth(data);
 		expect(auth).not.toBe(oldAuth);
 	});
 });
