@@ -102,23 +102,24 @@ export class LocalFs implements IFileSystem {
 		if (existing instanceof TFolder) {
 			throw new Error(`Cannot write file: "${path}" is an existing directory`);
 		}
+		let written: TFile;
 		if (existing instanceof TFile) {
 			await this.vault.modifyBinary(existing, content, { mtime });
+			written = existing;
 		} else {
 			// Ensure parent directories exist
 			const parentPath = path.substring(0, path.lastIndexOf("/"));
 			if (parentPath) {
 				await this.mkdirRecursive(parentPath);
 			}
-			await this.vault.createBinary(path, content, { mtime });
+			written = await this.vault.createBinary(path, content, { mtime });
 		}
-		const written = this.vault.getAbstractFileByPath(path);
 		const hash = await sha256(content);
 		return {
 			path,
 			isDirectory: false,
-			size: written instanceof TFile ? written.stat.size : content.byteLength,
-			mtime: written instanceof TFile ? written.stat.mtime : mtime,
+			size: written.stat.size,
+			mtime: written.stat.mtime,
 			hash,
 		};
 	}

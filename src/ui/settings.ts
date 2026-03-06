@@ -99,7 +99,7 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 			)
 			.addTextArea((text) =>
 				text
-					.setPlaceholder(`secret/**\ndrafts/**`)
+					.setPlaceholder(`secret/**\ndrafts/**`) // eslint-disable-line obsidianmd/ui/sentence-case
 					.setValue(
 						this.plugin.settings.excludePatterns.join("\n")
 					)

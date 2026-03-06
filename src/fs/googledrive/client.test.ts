@@ -272,7 +272,7 @@ describe("DriveClient resumable upload", () => {
 			}
 			if (callCount === 4) {
 				// Resume PUT: verify Content-Range header
-				const headers = typeof req === "string" ? {} : (req.headers ?? {}) as Record<string, string>;
+				const headers = typeof req === "string" ? {} : (req.headers ?? {});
 				const contentRange = headers["Content-Range"] ?? "";
 				expect(contentRange).toBe(`bytes 2097152-${fileSize - 1}/${fileSize}`);
 				return mockRes({

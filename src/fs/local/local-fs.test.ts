@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { App, TFolder } from "obsidian";
+import { App, TFile, TFolder } from "obsidian";
 import { LocalFs } from "./index";
 
 describe("LocalFs", () => {
@@ -37,12 +37,10 @@ describe("LocalFs", () => {
 			vi.spyOn(vault, "getAbstractFileByPath").mockReturnValue(null);
 			vi.spyOn(vault.adapter, "exists").mockResolvedValue(true);
 			const createSpy = vi.spyOn(vault, "createFolder");
-			vi.spyOn(vault, "createBinary").mockResolvedValue(
-				Object.assign(Object.create((await import("obsidian")).TFile.prototype), {
-					path: "a/file.txt",
-					stat: { size: 5, mtime: 0 },
-				}),
-			);
+			// eslint-disable-next-line obsidianmd/no-tfile-tfolder-cast
+			const mockFile: TFile = Object.create((await import("obsidian")).TFile.prototype) as TFile;
+			Object.assign(mockFile, { path: "a/file.txt", stat: { size: 5, mtime: 0 } });
+			vi.spyOn(vault, "createBinary").mockResolvedValue(mockFile);
 
 			const content = new TextEncoder().encode("hello").buffer;
 			await fs.write("a/file.txt", content, Date.now());

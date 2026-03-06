@@ -38,7 +38,7 @@ function sanitizeDeviceName(name: string): string {
 export function getDeviceName(isMobile: boolean, vaultId?: string): string {
 	if (isMobile) return vaultId ? `mobile-${vaultId}` : "mobile";
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		// eslint-disable-next-line @typescript-eslint/no-require-imports, import/no-nodejs-modules, no-undef
 		const os = require("os") as { hostname: () => string };
 		return os.hostname();
 	} catch {
