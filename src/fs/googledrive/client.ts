@@ -8,6 +8,7 @@ import {
 	assertStartPageTokenResponse,
 	assertDriveChangeList,
 } from "./types";
+import { AsyncPool } from "../../queue/async-queue";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -86,25 +87,34 @@ export class DriveClient {
 		return result;
 	}
 
-	/** Recursively list all files under a folder */
+	/** Recursively list all files under a folder with bounded concurrency */
 	async listAllFiles(rootFolderId: string): Promise<DriveFile[]> {
 		const allFiles: DriveFile[] = [];
-		const folderQueue: string[] = [rootFolderId];
+		const pool = new AsyncPool(3);
+		const tasks: Promise<void>[] = [];
 
-		while (folderQueue.length > 0) {
-			const folderId = folderQueue.shift()!;
-			let pageToken: string | undefined;
-
-			do {
-				const result = await this.listFiles(folderId, pageToken);
-				for (const file of result.files) {
-					allFiles.push(file);
-					if (file.mimeType === FOLDER_MIME) {
-						folderQueue.push(file.id);
+		const enqueueFolder = (folderId: string): void => {
+			const task = pool.run(async () => {
+				let pageToken: string | undefined;
+				do {
+					const result = await this.listFiles(folderId, pageToken);
+					for (const file of result.files) {
+						allFiles.push(file);
+						if (file.mimeType === FOLDER_MIME) {
+							enqueueFolder(file.id);
+						}
 					}
-				}
-				pageToken = result.nextPageToken;
-			} while (pageToken);
+					pageToken = result.nextPageToken;
+				} while (pageToken);
+			});
+			tasks.push(task);
+		};
+
+		enqueueFolder(rootFolderId);
+
+		// Drain: await tasks as they are added (tasks array grows dynamically)
+		for (let i = 0; i < tasks.length; i++) {
+			await tasks[i];
 		}
 
 		return allFiles;

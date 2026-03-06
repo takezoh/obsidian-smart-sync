@@ -413,7 +413,7 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 | Method | Description |
 |--------|-------------|
 | `listFiles(folderId, pageToken)` | List files in a folder (with pagination) |
-| `listAllFiles(rootFolderId)` | Recursively enumerate all files via DFS from root |
+| `listAllFiles(rootFolderId)` | Recursively enumerate all files with AsyncPool(3) concurrency |
 | `downloadFile(fileId)` | Download file content |
 | `uploadFile(...)` | Multipart upload (small files) |
 | `uploadFileResumable(...)` | Resumable upload (files > 5 MB) with resume-on-retry |
@@ -780,19 +780,7 @@ When no `SyncRecord` exists for a file:
 
 ## Known TODOs
 
-### High — Performance
-
-1. **`fullScan()` path resolution O(n×d) → O(n)** (`fs/googledrive/index.ts:67-74`)
-   - `resolveFilePath()` traverses the parent chain for each file, resulting in O(n×d) complexity (n = file count, d = average depth)
-   - Fix: Process files in topological order (parent → child) so each file's parent path is already resolved
-   - Impact is limited to initial full scan only — subsequent syncs use `changes.list` for incremental updates
-
-2. **`listAllFiles()` parallelization** (`fs/googledrive/client.ts:78-99`)
-   - BFS traversal issues one `listFiles()` call per folder sequentially
-   - Fix: Parallelize folder-level requests with bounded concurrency (3–5 concurrent requests)
-   - Currently sequential to avoid rate limits — any parallelization should be conservative
-
 ### Medium — Recognized limitations
 
-3. **In-memory metadata cache only** — `changesStartPageToken` is persisted in `backendData["googledrive"]`, but `pathToFile` / `idToPath` / `folders` caches are rebuilt from scratch on each plugin load via full scan. Persisting to IndexedDB would eliminate the initial full scan on reload
-4. **`rewriteChildPaths()` / `removePath()` O(n) scan** — Folder rename and delete operations iterate all cache entries to find children. A trie or parent→children index would reduce this to O(k) where k = number of children
+1. **In-memory metadata cache only** — `changesStartPageToken` is persisted in `backendData["googledrive"]`, but `pathToFile` / `idToPath` / `folders` caches are rebuilt from scratch on each plugin load via full scan. Persisting to IndexedDB would eliminate the initial full scan on reload
+2. **`rewriteChildPaths()` / `removePath()` O(n) scan** — Folder rename and delete operations iterate all cache entries to find children. A trie or parent→children index would reduce this to O(k) where k = number of children

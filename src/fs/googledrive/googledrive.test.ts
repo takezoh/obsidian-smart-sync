@@ -739,6 +739,131 @@ describe("GoogleDriveFs circular parent reference", () => {
 	});
 });
 
+// ---- TODO 2: listAllFiles() parallelization ----
+
+describe("DriveClient.listAllFiles parallelization", () => {
+	it("fetches nested folders concurrently via AsyncPool(3)", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const { DriveClient } = await import("./client");
+
+		const auth = new GoogleAuth();
+		auth.setTokens("refresh", "access", Date.now() + 3600_000);
+
+		// Track concurrent calls to detect parallelism
+		let concurrent = 0;
+		let maxConcurrent = 0;
+
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async (req) => {
+			concurrent++;
+			if (concurrent > maxConcurrent) maxConcurrent = concurrent;
+
+			// Small delay to allow parallel calls to overlap
+			await new Promise((r) => setTimeout(r, 10));
+
+			const url = typeof req === "string" ? req : req.url;
+			const params = new URLSearchParams(url.split("?")[1]);
+			const q = params.get("q") ?? "";
+
+			let files: unknown[] = [];
+			if (q.includes("'root'")) {
+				// Root contains 3 subfolders
+				files = [
+					{ id: "f1", name: "folder1", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+					{ id: "f2", name: "folder2", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+					{ id: "f3", name: "folder3", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+				];
+			} else if (q.includes("'f1'")) {
+				files = [{ id: "a", name: "a.txt", mimeType: "text/plain", parents: ["f1"] }];
+			} else if (q.includes("'f2'")) {
+				files = [{ id: "b", name: "b.txt", mimeType: "text/plain", parents: ["f2"] }];
+			} else if (q.includes("'f3'")) {
+				files = [{ id: "c", name: "c.txt", mimeType: "text/plain", parents: ["f3"] }];
+			}
+
+			concurrent--;
+			return mockRes({ files });
+		});
+
+		const client = new DriveClient(auth);
+		const result = await client.listAllFiles("root");
+
+		// 3 folders + 3 files = 6 total
+		expect(result).toHaveLength(6);
+		// Subfolders should have been fetched concurrently (max 3)
+		expect(maxConcurrent).toBeGreaterThan(1);
+		expect(maxConcurrent).toBeLessThanOrEqual(3);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("collects all files from deeply nested structure", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const { DriveClient } = await import("./client");
+
+		const auth = new GoogleAuth();
+		auth.setTokens("refresh", "access", Date.now() + 3600_000);
+
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async (req) => {
+			const url = typeof req === "string" ? req : req.url;
+			const params = new URLSearchParams(url.split("?")[1]);
+			const q = params.get("q") ?? "";
+
+			let files: unknown[] = [];
+			if (q.includes("'root'")) {
+				files = [{ id: "d1", name: "level1", mimeType: "application/vnd.google-apps.folder", parents: ["root"] }];
+			} else if (q.includes("'d1'")) {
+				files = [{ id: "d2", name: "level2", mimeType: "application/vnd.google-apps.folder", parents: ["d1"] }];
+			} else if (q.includes("'d2'")) {
+				files = [{ id: "leaf", name: "deep.txt", mimeType: "text/plain", parents: ["d2"] }];
+			}
+
+			return mockRes({ files });
+		});
+
+		const client = new DriveClient(auth);
+		const result = await client.listAllFiles("root");
+
+		expect(result).toHaveLength(3);
+		expect(result.map((f) => f.name)).toEqual(
+			expect.arrayContaining(["level1", "level2", "deep.txt"])
+		);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("propagates errors from parallel folder fetches", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const { DriveClient } = await import("./client");
+
+		const auth = new GoogleAuth();
+		auth.setTokens("refresh", "access", Date.now() + 3600_000);
+
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async (req) => {
+			const url = typeof req === "string" ? req : req.url;
+			const params = new URLSearchParams(url.split("?")[1]);
+			const q = params.get("q") ?? "";
+
+			if (q.includes("'root'")) {
+				return mockRes({
+					files: [
+						{ id: "f1", name: "ok", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+						{ id: "f2", name: "bad", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+					],
+				});
+			}
+			if (q.includes("'f2'")) {
+				throw Object.assign(new Error("Rate limited"), { status: 429 });
+			}
+			return mockRes({ files: [] });
+		});
+
+		const client = new DriveClient(auth);
+		await expect(client.listAllFiles("root")).rejects.toThrow();
+
+		mockRequestUrl.mockRestore();
+	});
+});
+
 // ---- Fix 3: Resumable upload (single PUT + resume-on-retry) ----
 
 /** Type for accessing private resumeCache on DriveClient in tests */

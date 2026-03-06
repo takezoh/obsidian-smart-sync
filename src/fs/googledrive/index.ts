@@ -66,9 +66,10 @@ export class GoogleDriveFs implements IFileSystem {
 			byId.set(file.id, file);
 		}
 
-		// Resolve paths by walking parent chain
+		// Resolve paths with memoization — O(n) instead of O(n×d)
+		const resolvedPaths = new Map<string, string>();
 		for (const file of allFiles) {
-			const path = this.resolveFilePath(file, byId);
+			const path = this.resolveFilePathCached(file, byId, resolvedPaths, new Set());
 			this.pathToFile.set(path, file);
 			this.idToPath.set(file.id, path);
 			if (file.mimeType === FOLDER_MIME) {
@@ -263,30 +264,54 @@ export class GoogleDriveFs implements IFileSystem {
 		}
 	}
 
-	private resolveFilePath(
+	/**
+	 * Resolve a file's path with memoization.
+	 * Already-resolved ancestor paths are reused, cutting complexity from O(n×d) to O(n).
+	 */
+	private resolveFilePathCached(
 		file: DriveFile,
-		byId: Map<string, DriveFile>
+		byId: Map<string, DriveFile>,
+		resolvedPaths: Map<string, string>,
+		visiting: Set<string>
 	): string {
-		const segments: string[] = [file.name];
-		let current = file;
-		const visited = new Set<string>([file.id]);
+		const cached = resolvedPaths.get(file.id);
+		if (cached !== undefined) return cached;
 
-		while (current.parents && current.parents.length > 0) {
-			const parentId = this.findRelevantParentId(current.parents, byId);
-			if (!parentId || parentId === this.rootFolderId) break;
-			if (visited.has(parentId)) {
-				console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
-				this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
-				break;
-			}
-			const parent = byId.get(parentId);
-			if (!parent) break;
-			visited.add(parentId);
-			segments.unshift(parent.name);
-			current = parent;
+		if (visiting.has(file.id)) {
+			console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
+			this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
+			resolvedPaths.set(file.id, file.name);
+			return file.name;
 		}
 
-		return segments.join("/");
+		if (!file.parents || file.parents.length === 0) {
+			resolvedPaths.set(file.id, file.name);
+			return file.name;
+		}
+
+		const parentId = this.findRelevantParentId(file.parents, byId);
+		if (!parentId || parentId === this.rootFolderId || parentId === file.id) {
+			if (parentId === file.id) {
+				console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
+				this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
+			}
+			resolvedPaths.set(file.id, file.name);
+			return file.name;
+		}
+
+		const parent = byId.get(parentId);
+		if (!parent) {
+			resolvedPaths.set(file.id, file.name);
+			return file.name;
+		}
+
+		visiting.add(file.id);
+		const parentPath = this.resolveFilePathCached(parent, byId, resolvedPaths, visiting);
+		visiting.delete(file.id);
+
+		const fullPath = `${parentPath}/${file.name}`;
+		resolvedPaths.set(file.id, fullPath);
+		return fullPath;
 	}
 
 	/**
