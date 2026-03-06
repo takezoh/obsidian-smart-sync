@@ -37,11 +37,14 @@ src/
 │   ├── state.ts                    # SyncStateStore — IndexedDB-based sync state persistence
 │   ├── conflict.ts                 # resolveConflict() — conflict resolution strategy execution
 │   └── merge.ts                    # threeWayMerge() + isMergeEligible() — 3-way merge via node-diff3
+├── logging/
+│   └── logger.ts                   # Logger — structured logging to vault files
 ├── queue/
 │   └── async-queue.ts              # AsyncMutex — promise-based mutual exclusion
 ├── utils/
 │   ├── hash.ts                     # sha256() — Web Crypto API
-│   └── glob.ts                     # matchGlob() — glob pattern matching (regex conversion + cache)
+│   ├── glob.ts                     # matchGlob() — glob pattern matching (regex conversion + cache)
+│   └── path.ts                     # Path utilities
 ├── ui/
 │   ├── settings.ts                 # SmartSyncSettingTab — settings tab UI
 │   ├── backend-settings.ts         # IBackendSettingsRenderer interface + renderer registry
@@ -62,6 +65,7 @@ src/
 │  - Command, ribbon, status bar registration         │
 │  - Auto-sync timer, event-driven & foreground sync  │
 │  - Backend initialization & connection flow         │
+│  - Logger initialization (passed to service layer)  │
 ├─────────────────────────────────────────────────────┤
 │  sync/service.ts (SyncService)                      │
 │  - Sync orchestration                               │
@@ -83,7 +87,8 @@ src/
 │    (for 3-way merge)   - node-diff3 wrapper         │
 ├─────────────────────────────────────────────────────┤
 │  fs/interface.ts (IFileSystem)                      │
-│  - list, stat, read, write, mkdir, delete, rename   │
+│  - list, stat, read, write, mkdir, listDir,         │
+│    delete, rename                                   │
 ├──────────────────┬──────────────────────────────────┤
 │  fs/local/       │  fs/googledrive/                 │
 │  LocalFs         │  GoogleDriveFs                   │
@@ -126,7 +131,8 @@ interface SyncRecord {
   hash: string;                        // Content SHA-256 at sync time
   localMtime: number;
   remoteMtime: number;
-  size: number;
+  localSize: number;
+  remoteSize: number;
   backendMeta?: Record<string, unknown>;
   syncedAt: number;                    // Sync completion time (Unix ms)
 }
@@ -169,6 +175,7 @@ type DecisionType =
   | "remote_modified_pull"        // Remote modified → download
   | "local_deleted_propagate"     // Local deleted → delete remote too
   | "remote_deleted_propagate"    // Remote deleted → delete local too
+  | "initial_match"               // Both exist, identical content → seed SyncRecord
   | "conflict_both_modified"      // Both modified → conflict resolution
   | "conflict_both_created"       // Both new → conflict resolution
   | "conflict_delete_vs_modify"   // Delete vs modify → conflict resolution
@@ -202,6 +209,7 @@ interface IFileSystem {
   read(path: string): Promise<ArrayBuffer>;
   write(path: string, content: ArrayBuffer, mtime: number): Promise<FileEntity>;
   mkdir(path: string): Promise<FileEntity>;
+  listDir(path: string): Promise<FileEntity[]>;
   delete(path: string): Promise<void>;
   rename(oldPath: string, newPath: string): Promise<void>;
 }
@@ -241,7 +249,7 @@ interface IBackendProvider {
   readonly type: string;
   readonly displayName: string;
   readonly auth: IAuthProvider;
-  createFs(app: App, settings: SmartSyncSettings): IFileSystem | null;
+  createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
   isConnected(settings: SmartSyncSettings): boolean;
   readFsState?(fs: IFileSystem): Partial<SmartSyncSettings>;  // Optional — not all backends have internal state to persist
 }
@@ -338,7 +346,7 @@ Receives a list of `SyncDecision`s and executes the corresponding IFileSystem op
 
 - **Push**: `localFs.read()` → `remoteFs.write()` → `write()` returns `FileEntity` (remote metadata) → `localFs.stat()` for fresh local metadata → both saved to `SyncRecord`
 - **Pull**: `remoteFs.read()` → `localFs.write()` → `write()` returns `FileEntity` (local metadata) → `remoteFs.stat()` for fresh remote metadata → both saved to `SyncRecord`
-- **Delete propagation**: With TOCTOU guard — re-checks via `stat()` before deleting; skips if the other side has changed
+- **Delete propagation**: With TOCTOU guard — re-checks via `stat()` before deleting; skips if the other side has changed. After deleting on the remote side (`local_deleted_propagate`), `removeEmptyParents()` walks up the directory tree via `listDir()` and removes empty parent directories
 - **Conflicts**: Delegates to `resolveConflict()`. Can invoke UI (ConflictModal) via `onConflict` callback
 
 **Per-file errors**: `executeOne()` is wrapped in try/catch. On error, SyncRecord is **not** updated — the file remains in its pre-sync state and will be re-evaluated on the next sync cycle.
@@ -350,7 +358,7 @@ Receives a list of `SyncDecision`s and executes the corresponding IFileSystem op
 Orchestrates the entire sync flow.
 
 1. Acquire `syncMutex.run()` for mutual exclusion
-2. `buildMixedEntities()` + filter (exclude patterns + mobile include/size checks) + `computeDecisions()`
+2. `buildMixedEntities()` + filter (exclude patterns + mobile include/size checks) + `resolveEmptyHashes()` + `computeDecisions()`
 3. If 5+ conflicts with `ask` strategy → show `ConflictSummaryModal`
 4. Execute `SyncExecutor.execute()`
 5. Save backend state (`changesStartPageToken`, etc.) to settings
@@ -498,7 +506,7 @@ IndexedDB-based. Database name is `smart-sync-{vaultId}` (independent per vault)
 
 All public methods use `getDb()` internally, which handles automatic re-open if the connection was closed by an `onversionchange` event.
 
-DB version 2 adds the `sync-content` store (auto-migration via `onupgradeneeded`).
+DB version 3. The v2→v3 upgrade (`size` → `localSize`/`remoteSize` in `SyncRecord`) is a breaking schema change — `onupgradeneeded` drops and recreates all object stores, clearing existing sync state.
 
 ---
 
@@ -624,7 +632,7 @@ Glob matching via `matchGlob()`. Pattern syntax:
 | `**` | Any depth of path |
 | `**/` | Prefix chain |
 
-Default excludes: `.trash/**` is included in `DEFAULT_SETTINGS`. `.obsidian/**` (specifically `${configDir}/**`) is dynamically added in `main.ts`'s `loadSettings()` since `configDir` varies per vault.
+`excludePatterns` defaults to an empty array. Users add patterns (e.g., `*.zip`, `large-assets/**`) via the settings UI. Dot-prefixed files and directories (`.obsidian/`, `.trash/`, etc.) are already excluded by Obsidian's Vault API — `getAllLoadedFiles()` does not index them, so they never appear in `LocalFs.list()` and do not need exclude patterns.
 
 Compiled regexes are cached in `globCache` to avoid recompilation.
 
@@ -727,6 +735,8 @@ When no `SyncRecord` exists for a file:
 - `src/sync/merge.test.ts` — 3-way merge (clean merge, conflicts, eligibility)
 - `src/sync/service.test.ts` — SyncService orchestration
 - `src/sync/state.test.ts` — IndexedDB store CRUD
+- `src/logging/logger.test.ts` — Logger behavior
+- `src/utils/path.test.ts` — Path utilities
 
 ---
 
