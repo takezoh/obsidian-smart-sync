@@ -13,7 +13,7 @@ Currently supports Google Drive as a storage backend.
 - **Conflict detection**: Accurately detects local and remote changes, even when both sides are edited
 - **Conflict resolution**: 6 strategies — keep_newer / keep_local / keep_remote / duplicate / 3-way merge / ask (manual)
 - **3-way merge**: For concurrent edits on text files (Markdown, etc.), automatically merges changes
-- **Exclude patterns**: Specify files/folders to exclude via glob patterns (`.obsidian/**` and `.trash/**` excluded by default)
+- **Exclude patterns**: Specify files/folders to exclude via glob patterns (e.g. `*.zip`, `large-assets/**`)
 - **Status bar**: Real-time sync status display (Synced / Syncing... / Sync error / Not connected)
 - **Ribbon icon**: One-click manual sync
 
@@ -31,7 +31,7 @@ See backend-specific setup instructions:
 | Auto-sync interval | Sync interval in minutes (0 to disable) | 5 |
 | Conflict strategy | Resolution strategy for conflicts | keep_newer |
 | Enable 3-way merge | Enable 3-way merge for text files | Off |
-| Exclude patterns | Glob patterns to exclude (one per line) | `.trash/**` (`.obsidian/**` auto-added) |
+| Exclude patterns | Glob patterns to exclude (one per line) | (none) |
 
 ### Conflict resolution strategies
 
@@ -49,19 +49,6 @@ See backend-specific setup instructions:
 | Command | Description |
 |---------|-------------|
 | `Smart Sync: Sync now` | Run sync manually |
-
-## Troubleshooting
-
-### Sync errors for files created by other plugins
-
-Some plugins (e.g. Smart Connections, Make.md) create data directories like `.smart-env/` or `.space/`. These are auto-generated locally and do not need to be synced.
-
-Add them to the exclude patterns in settings:
-
-```
-.smart-env/**
-.space/**
-```
 
 ## Disclaimer
 
