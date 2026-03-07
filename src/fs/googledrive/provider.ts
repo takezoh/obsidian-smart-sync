@@ -17,6 +17,7 @@ import type { DriveFile } from "./types";
 /** All data stored in backendData["googledrive"] */
 export interface GoogleDriveBackendData {
 	remoteVaultFolderId: string;
+	lastKnownVaultName: string;
 	refreshToken: string;
 	accessToken: string;
 	accessTokenExpiry: number;
@@ -27,6 +28,7 @@ export interface GoogleDriveBackendData {
 
 const DEFAULT_GDRIVE_DATA: GoogleDriveBackendData = {
 	remoteVaultFolderId: "",
+	lastKnownVaultName: "",
 	refreshToken: "",
 	accessToken: "",
 	accessTokenExpiry: 0,
@@ -182,6 +184,19 @@ export class GoogleDriveProvider implements IBackendProvider {
 		return !!data.refreshToken;
 	}
 
+	getIdentity(settings: SmartSyncSettings): string | null {
+		const data = getGDriveData(settings);
+		if (!data.remoteVaultFolderId) return null;
+		return `googledrive:${data.remoteVaultFolderId}`;
+	}
+
+	resetTargetState(settings: SmartSyncSettings): void {
+		const data = settings.backendData[this.type];
+		if (data) {
+			delete data.changesStartPageToken;
+		}
+	}
+
 	readBackendState(fs: IFileSystem): Record<string, unknown> {
 		if (!(fs instanceof GoogleDriveFs)) return {};
 		const result: Record<string, unknown> = {};
@@ -204,14 +219,14 @@ export class GoogleDriveProvider implements IBackendProvider {
 		_app: App,
 		settings: SmartSyncSettings,
 		vaultName: string,
-		cachedRemoteVaultId: string | undefined,
 		logger?: Logger,
 	): Promise<RemoteVaultResolution> {
 		const data = getGDriveData(settings);
 		const googleAuth = this.auth.getOrCreateGoogleAuth(data, logger);
 		googleAuth.setTokens(data.refreshToken, data.accessToken, data.accessTokenExpiry);
 		const client = new DriveClient(googleAuth, logger);
-		return resolveGDriveRemoteVault(client, vaultName, cachedRemoteVaultId, logger);
+		const cachedFolderId = data.remoteVaultFolderId || undefined;
+		return resolveGDriveRemoteVault(client, vaultName, cachedFolderId, logger);
 	}
 
 	async disconnect(_settings: SmartSyncSettings): Promise<Record<string, unknown>> {

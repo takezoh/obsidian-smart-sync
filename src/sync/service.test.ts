@@ -547,6 +547,106 @@ describe("SyncService — bulk conflict resolution", () => {
 	});
 });
 
+describe("SyncService — clearSyncState", () => {
+	it("clears all sync records from the state store", async () => {
+		const localFs = createMockFs("local");
+		const remoteFs = createMockFs("remote");
+
+		// Add a file and sync it so state store has records
+		addFile(localFs, "file.md", "content", 1000);
+
+		const deps = createMockDeps({
+			localFs: () => localFs,
+			remoteFs: () => remoteFs,
+		});
+		const service = new SyncService(deps);
+
+		await service.runSync();
+		// Verify state store has records
+		const recordsBefore = await service.state.getAll();
+		expect(recordsBefore.length).toBeGreaterThan(0);
+
+		await service.clearSyncState();
+
+		const recordsAfter = await service.state.getAll();
+		expect(recordsAfter.length).toBe(0);
+		await service.close();
+	});
+});
+
+describe("SyncService — mass deletion safety net", () => {
+	it("aborts sync when all local files would be deleted (stale state)", async () => {
+		const localFs = createMockFs("local");
+		const remoteFs = createMockFs("remote");
+
+		// Add 10 files only to local — first sync pushes them to remote
+		for (let i = 0; i < 10; i++) {
+			addFile(localFs, `file${i}.md`, `content ${i}`, 1000);
+		}
+
+		const deps = createMockDeps({
+			localFs: () => localFs,
+			remoteFs: () => remoteFs,
+		});
+		const service = new SyncService(deps);
+
+		// First sync pushes files to remote and creates state records
+		await service.runSync();
+		const recordsAfterSync = await service.state.getAll();
+		expect(recordsAfterSync.length).toBe(10);
+
+		// Now simulate switching to an empty remote folder:
+		// remote is empty, but local still has files and state has records
+		remoteFs.files.clear();
+
+		// Run sync again — safety net triggers, clears state, then retry
+		// pushes all files to the "new" empty remote (correct behavior)
+		await service.runSync();
+
+		// Local files should NOT be deleted
+		for (let i = 0; i < 10; i++) {
+			expect(localFs.files.has(`file${i}.md`)).toBe(true);
+		}
+
+		// Files should be re-pushed to remote on retry
+		for (let i = 0; i < 10; i++) {
+			expect(remoteFs.files.has(`file${i}.md`)).toBe(true);
+		}
+
+		await service.close();
+	});
+
+	it("does not trigger for normal partial deletions", async () => {
+		const localFs = createMockFs("local");
+		const remoteFs = createMockFs("remote");
+
+		// Add 10 files only to local — first sync pushes them
+		for (let i = 0; i < 10; i++) {
+			addFile(localFs, `file${i}.md`, `content ${i}`, 1000);
+		}
+
+		const deps = createMockDeps({
+			localFs: () => localFs,
+			remoteFs: () => remoteFs,
+		});
+		const service = new SyncService(deps);
+
+		await service.runSync();
+
+		// Delete only 3 files from remote (partial, not all)
+		remoteFs.files.delete("file0.md");
+		remoteFs.files.delete("file1.md");
+		remoteFs.files.delete("file2.md");
+
+		await service.runSync();
+
+		// Should NOT trigger the safety net — partial deletion is normal
+		expect(deps.onStatusChange).toHaveBeenCalledWith("idle");
+
+		await service.close();
+	});
+});
+
 describe("SyncService — resolveEmptyHashes edge cases", () => {
 	it("skips hash computation when file sizes differ", async () => {
 		const localFs = createMockFs("local");

@@ -145,6 +145,7 @@ describe("GoogleDriveAuthProvider.getOrCreateGoogleAuth", () => {
 			accessToken: "",
 			accessTokenExpiry: 0,
 			remoteVaultFolderId: "folder",
+			lastKnownVaultName: "",
 			changesStartPageToken: "",
 			pendingCodeVerifier: "",
 			pendingAuthState: "",

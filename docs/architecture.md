@@ -37,7 +37,7 @@ src/
 │   └── mock/
 │       └── index.ts                # MockFs — in-memory IFileSystem for testing
 ├── sync/
-│   ├── remote-vault.ts             # RemoteVaultStore (IndexedDB), shared types & constants
+│   ├── remote-vault.ts             # Remote vault types & constants (REMOTE_VAULT_ROOT, RemoteVaultResolution)
 │   ├── types.ts                   # SyncRecord, MixedEntity, DecisionType, ConflictStrategy, SyncDecision
 │   ├── engine.ts                   # buildMixedEntities() + computeDecisions() — 3-state decision table
 │   ├── executor.ts                 # SyncExecutor — executes IFileSystem operations based on decisions
@@ -84,11 +84,13 @@ src/
 │  - Remote vault resolution (before FS creation)     │
 │  - Auth lifecycle (start, complete, disconnect)     │
 │  - Manages IBackendProvider + IFileSystem instances  │
+│  - Identity tracking (clears sync state on change)  │
 ├─────────────────────────────────────────────────────┤
 │  sync/service.ts (SyncService)                      │
 │  - Sync orchestration                               │
 │  - Retry (exponential backoff + jitter, max 3)      │
 │  - Mutual exclusion (syncMutex)                     │
+│  - Mass deletion safety net                         │
 │  - Conflict UI dispatch                             │
 │  - Progress & result notification                   │
 ├─────────────────────────────────────────────────────┤
@@ -271,15 +273,21 @@ interface IBackendProvider {
   readonly auth: IAuthProvider;
   createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
   isConnected(settings: SmartSyncSettings): boolean;
+  getIdentity(settings: SmartSyncSettings): string | null;
+  resetTargetState?(settings: SmartSyncSettings): void;
   readBackendState?(fs: IFileSystem): Record<string, unknown>;
-  resolveRemoteVault?(app: App, settings: SmartSyncSettings, vaultName: string, cachedRemoteVaultId: string | undefined, logger?: Logger): Promise<RemoteVaultResolution>;
+  resolveRemoteVault?(app: App, settings: SmartSyncSettings, vaultName: string, logger?: Logger): Promise<RemoteVaultResolution>;
   disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>>;
 }
 ```
 
+`getIdentity()` returns a string uniquely identifying the current remote target (e.g. `googledrive:<folderId>`). `BackendManager` uses this to detect when the user switches to a different remote folder — when the identity changes, it calls `resetTargetState()` on the provider and fires `onIdentityChanged` so the consumer (main.ts) can clear sync state. Returns `null` when the backend is not fully configured.
+
+`resetTargetState()` is optional — called by `BackendManager` when the identity changes. The provider resets any backend-specific cursors/tokens scoped to the previous remote target (e.g. Google Drive's `changesStartPageToken`). This keeps backend-specific field names out of `BackendManager`.
+
 `readBackendState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens). `SyncService` checks existence before calling (`provider?.readBackendState && ...`). The returned opaque record is stored in `settings.backendData[provider.type]` — the sync layer never inspects its contents.
 
-`resolveRemoteVault` is optional. When implemented, `BackendManager` calls it after auth and before `createFs()` to discover or create a remote vault folder. The result provides `remoteVaultId` (persisted in IndexedDB) and `backendUpdates` (merged into `settings.backendData`). Resolution is skipped when the cached ID exists and vault name hasn't changed.
+`resolveRemoteVault` is optional. When implemented, `BackendManager` calls it after auth and before `createFs()` to discover or create a remote vault folder. The result provides `backendUpdates` (merged into `settings.backendData`, including `remoteVaultFolderId` and `lastKnownVaultName`). Resolution is skipped when the cached folder ID exists and vault name hasn't changed.
 
 `disconnect()` revokes auth and resets all backend state, returning the reset data to persist.
 
@@ -395,10 +403,11 @@ Orchestrates the entire sync flow.
 
 1. Acquire `syncMutex.run()` for mutual exclusion
 2. `buildMixedEntities()` + filter (exclude patterns + mobile include/size checks) + `resolveEmptyHashes()` + `computeDecisions()`
-3. If 5+ conflicts with `ask` strategy → show `ConflictSummaryModal`
-4. Execute `SyncExecutor.execute()`
-5. Save backend state to `settings.backendData[type]` via `readBackendState()`
-6. Send result notifications
+3. Mass deletion safety check (see below)
+4. If 5+ conflicts with `ask` strategy → show `ConflictSummaryModal`
+5. Execute `SyncExecutor.execute()`
+6. Save backend state to `settings.backendData[type]` via `readBackendState()`
+7. Send result notifications
 
 **Retry**: Max 3 attempts for transport-level errors (network failures, 5xx). Exponential backoff (`2^n * 1000ms`) ± 50% jitter. Immediate abort for:
 - 401/403: Auth error
@@ -406,6 +415,8 @@ Orchestrates the entire sync flow.
 - 429: Respects `Retry-After` header
 
 Per-file errors (e.g., individual read/write failures) do not trigger retry. They are reported via notification and `partial_error` status.
+
+**Mass deletion safety net**: After `computeDecisions()`, if all local files (>5) would be deleted via `remote_deleted_propagate` (i.e., remote appears completely empty), the sync aborts with an error, and all sync state is cleared. This catches two scenarios: (1) stale `SyncRecord` entries that survived a backend identity change, and (2) Drive's eventual consistency returning an empty `list()` for a folder that was just populated. Since the state is cleared before throwing, the retry loop re-runs with clean state and pushes all local files to the remote (correct recovery). `clearSyncState()` is also exposed as a public method for `BackendManager` to call directly.
 
 **Sync deduplication**: If a new sync request arrives during an ongoing sync, it is coalesced into a single run (`pendingSync` flag).
 
@@ -471,6 +482,8 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 `IBackendProvider` implementation. Handles FS creation and state management. Authentication is delegated to `GoogleDriveAuthProvider` via composition (`this.auth`). Settings UI is handled separately by `GoogleDriveSettingsRenderer` in `ui/googledrive-settings.ts`.
 
 - `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(data)` to obtain a `GoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
+- `getIdentity()`: Returns `googledrive:<driveFolderId>` (or `null` if not configured)
+- `resetTargetState()`: Clears stale `changesStartPageToken` from `backendData` when the user switches Drive folders
 - `readBackendState()`: Read `changesStartPageToken` + refreshed tokens from `GoogleDriveFs` and return as opaque record
 - `resolveRemoteVault()`: Discover or create the remote vault folder in Google Drive (`obsidian-smart-sync/{uuid}/`)
 - `disconnect()`: Revoke auth tokens and return reset backend data
@@ -555,28 +568,24 @@ DB version 3. The v2→v3 upgrade (`size` → `localSize`/`remoteSize` in `SyncR
 
 ## Remote vault (`sync/remote-vault.ts`)
 
-Each Obsidian vault maps to a dedicated folder in the backend storage, organized under a common root: `obsidian-smart-sync/{remoteVaultId}/`. The `remoteVaultId` is a UUID assigned on first connection and never changes.
-
-### RemoteVaultStore
-
-IndexedDB store (`smart-sync-rv-{vaultId}`) that persists `remoteVaultId` and `lastKnownVaultName`. Used by `BackendManager` to cache the link between a local vault and its remote folder, avoiding redundant resolution on every startup.
+Each Obsidian vault maps to a dedicated folder in the backend storage, organized under a common root: `obsidian-smart-sync/{uuid}/`. The folder's Drive ID (`remoteVaultFolderId`) and `lastKnownVaultName` are persisted in `settings.backendData`.
 
 ### Resolution flow (BackendManager.initBackend)
 
 1. If `resolveRemoteVault` is not implemented by the provider, skip (backwards compatible)
-2. Load `cachedRemoteVaultId` and `lastKnownVaultName` from `RemoteVaultStore`
-3. If cached ID exists and vault name hasn't changed → skip (no network call)
-4. Otherwise call `provider.resolveRemoteVault()` → persist `backendUpdates` in settings and save `remoteVaultId` + `vaultName` in IndexedDB
+2. Read `remoteVaultFolderId` and `lastKnownVaultName` from `settings.backendData[type]`
+3. If folder ID exists and vault name hasn't changed → skip (no network call)
+4. Otherwise call `provider.resolveRemoteVault()` → merge `backendUpdates` into `settings.backendData`
 
 ### Metadata
 
-Each remote vault contains `.smartsync/metadata.json` with `{ vaultName }`. This is used by new devices to find a matching remote vault by `app.vault.getName()`. Already-linked devices use the cached `remoteVaultId` and only update `metadata.json` when the local vault name changes.
+Each remote vault contains `.smartsync/metadata.json` with `{ vaultName }`. This is used by new devices to find a matching remote vault by `app.vault.getName()`. Already-linked devices use the cached `remoteVaultFolderId` and only update `metadata.json` when the local vault name changes.
 
 ### Google Drive implementation (`fs/googledrive/remote-vault.ts`)
 
 `resolveGDriveRemoteVault()` handles Drive-specific resolution:
 
-- **Cached path** (linked device): Find `obsidian-smart-sync/{cachedId}` folder → verify it exists → update `metadata.json` if vault name changed
+- **Cached path** (linked device): Verify cached `remoteVaultFolderId` exists via `getFile()` → update `metadata.json` if vault name changed
 - **Uncached path** (new device): List all folders under `obsidian-smart-sync/` → read each `metadata.json` → match by `vaultName` → link if found, otherwise create new UUID folder with `.smartsync/metadata.json`
 
 Uses `DriveClient.findChildByName()` for efficient single-folder lookups instead of full recursive scans.
@@ -813,6 +822,7 @@ When no `SyncRecord` exists for a file:
 - `src/fs/googledrive/auth.test.ts` — GoogleAuth OAuth + PKCE
 - `src/fs/googledrive/client.test.ts` — DriveClient API calls
 - `src/fs/googledrive/types.test.ts` — Drive type validators
+- `src/fs/backend-manager.test.ts` — BackendManager identity tracking, sync state clearing
 - `src/store/idb-helper.test.ts` — IDBHelper lifecycle & transactions
 - `src/store/metadata-store.test.ts` — MetadataStore CRUD
 - `src/queue/async-queue.test.ts` — AsyncMutex exclusion, AsyncPool concurrency
@@ -833,8 +843,9 @@ When no `SyncRecord` exists for a file:
 1. **Mobile OAuth**: Redirect handling may differ from desktop. Mitigated by manual callback URL paste. `isDesktopOnly: false` but mobile requires additional validation
 2. **Drive API rate limits**: Initial full scan on large vaults may hit limits. Subsequent syncs use `changes.list` for incremental updates only. 403 rate-limit errors (Google returns `reason: rateLimitExceeded` instead of 429 in some cases) are detected and retried with backoff
 3. **Mass conflicts after extended offline**: Shows `ConflictSummaryModal` for 5+ conflicts with bulk resolution options
-4. **TOCTOU races**: Delete propagation re-checks via `stat()`. Skips if the other side has changed
-5. **Network reconnect + auto-sync overlap**: When the browser comes back online just before an auto-sync timer fires, two sequential syncs may run. The `syncMutex` prevents concurrent execution, and `syncPending` deduplicates requests during an active sync. However, if the first sync completes before the second trigger fires, both execute independently. Impact is minimal — the second sync uses `changes.list` incremental fetch with no new changes
-6. **OAuth client secret exposure**: The Google OAuth client secret (Web application type) is embedded in the plugin source code. Google considers Web app secrets confidential (unlike Desktop app secrets). Practical risk is low — redirect URIs are locked in GCP, PKCE prevents auth code interception, and refresh tokens are stored only on the user's device. Additionally, `exchangeCode()` verifies the `state` parameter against `pendingAuthState` before processing, preventing forged callbacks from a compromised relay or CSRF attacks. However, Google could theoretically disable the client if they detect the secret is public. Mitigation options: (a) accept the risk (common in OSS — e.g. VS Code's GitHub integration), (b) add a thin serverless backend (Cloudflare Worker / Cloud Functions) for token exchange only, or (c) revert to Desktop app type and rely on manual callback URL paste
-7. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores the Drive MD5 as `contentChecksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads. The `contentChecksum` key is backend-agnostic (each backend maps its native checksum: Drive's `md5Checksum`, Dropbox's `content_hash`, S3's `ETag`)
+4. **Empty remote folder deletes local files**: When the user changes Drive folders (or reconnects), stale `SyncRecord` entries could cause the engine to interpret all local files as "remote deleted". Mitigated by two layers: (a) `BackendManager` tracks backend identity (`getIdentity()`) and fires `onIdentityChanged` when the identity changes — the provider resets its own stale cursors via `resetTargetState()` and `main.ts` clears sync state via `SyncService.clearSyncState()`, (b) `SyncService` has a mass deletion safety net that aborts and clears state if all local files (>5) would be deleted via `remote_deleted_propagate`
+5. **TOCTOU races**: Delete propagation re-checks via `stat()`. Skips if the other side has changed
+6. **Network reconnect + auto-sync overlap**: When the browser comes back online just before an auto-sync timer fires, two sequential syncs may run. The `syncMutex` prevents concurrent execution, and `syncPending` deduplicates requests during an active sync. However, if the first sync completes before the second trigger fires, both execute independently. Impact is minimal — the second sync uses `changes.list` incremental fetch with no new changes
+7. **OAuth client secret exposure**: The Google OAuth client secret (Web application type) is embedded in the plugin source code. Google considers Web app secrets confidential (unlike Desktop app secrets). Practical risk is low — redirect URIs are locked in GCP, PKCE prevents auth code interception, and refresh tokens are stored only on the user's device. Additionally, `exchangeCode()` verifies the `state` parameter against `pendingAuthState` before processing, preventing forged callbacks from a compromised relay or CSRF attacks. However, Google could theoretically disable the client if they detect the secret is public. Mitigation options: (a) accept the risk (common in OSS — e.g. VS Code's GitHub integration), (b) add a thin serverless backend (Cloudflare Worker / Cloud Functions) for token exchange only, or (c) revert to Desktop app type and rely on manual callback URL paste
+8. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores the Drive MD5 as `contentChecksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads. The `contentChecksum` key is backend-agnostic (each backend maps its native checksum: Drive's `md5Checksum`, Dropbox's `content_hash`, S3's `ETag`)
 

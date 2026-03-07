@@ -51,7 +51,7 @@ describe("resolveGDriveRemoteVault", () => {
 		vi.spyOn(crypto, "randomUUID").mockReturnValue("test-uuid-1234" as `${string}-${string}-${string}-${string}-${string}`);
 	});
 
-	describe("first-time setup (no cached ID, no existing vaults)", () => {
+	describe("first-time setup (no cached folder ID, no existing vaults)", () => {
 		it("creates root folder, vault folder, .smartsync, and metadata.json", async () => {
 			// Root folder doesn't exist
 			mock.findChildByName.mockResolvedValueOnce(null);
@@ -68,8 +68,10 @@ describe("resolveGDriveRemoteVault", () => {
 
 			const result = await resolveGDriveRemoteVault(mock.client, "My Vault", undefined);
 
-			expect(result.remoteVaultId).toBe("test-uuid-1234");
-			expect(result.backendUpdates).toEqual({ remoteVaultFolderId: "vault-folder-id" });
+			expect(result.backendUpdates).toEqual({
+				remoteVaultFolderId: "vault-folder-id",
+				lastKnownVaultName: "My Vault",
+			});
 
 			// Verify root folder lookup
 			expect(mock.findChildByName).toHaveBeenCalledWith("root", REMOTE_VAULT_ROOT, FOLDER_MIME);
@@ -102,17 +104,17 @@ describe("resolveGDriveRemoteVault", () => {
 
 			const result = await resolveGDriveRemoteVault(mock.client, "My Vault", undefined);
 
-			expect(result.remoteVaultId).toBe("existing-uuid");
-			expect(result.backendUpdates).toEqual({ remoteVaultFolderId: "existing-vault-folder-id" });
+			expect(result.backendUpdates).toEqual({
+				remoteVaultFolderId: "existing-vault-folder-id",
+				lastKnownVaultName: "My Vault",
+			});
 		});
 	});
 
-	describe("reconnect with cached ID", () => {
+	describe("reconnect with cached folder ID", () => {
 		it("reuses existing vault folder", async () => {
-			// Root folder exists
-			mock.findChildByName.mockResolvedValueOnce(makeFolder("root-folder-id", REMOTE_VAULT_ROOT));
-			// Find vault folder by cached ID
-			mock.findChildByName.mockResolvedValueOnce(makeFolder("vault-folder-id", "cached-uuid"));
+			// getFile succeeds (folder exists)
+			mock.getFile.mockResolvedValueOnce(makeFolder("vault-folder-id", "cached-uuid"));
 			// Find .smartsync
 			mock.findChildByName.mockResolvedValueOnce(makeFolder("ss-id", ".smartsync"));
 			// Find metadata.json
@@ -121,30 +123,30 @@ describe("resolveGDriveRemoteVault", () => {
 			const metaContent = new TextEncoder().encode(JSON.stringify({ vaultName: "My Vault" }));
 			mock.downloadFile.mockResolvedValueOnce(metaContent.buffer);
 
-			const result = await resolveGDriveRemoteVault(mock.client, "My Vault", "cached-uuid");
+			const result = await resolveGDriveRemoteVault(mock.client, "My Vault", "vault-folder-id");
 
-			expect(result.remoteVaultId).toBe("cached-uuid");
-			expect(result.backendUpdates).toEqual({ remoteVaultFolderId: "vault-folder-id" });
+			expect(result.backendUpdates).toEqual({
+				remoteVaultFolderId: "vault-folder-id",
+				lastKnownVaultName: "My Vault",
+			});
+			// Should NOT search for root folder — goes straight to getFile
+			expect(mock.findChildByName).not.toHaveBeenCalledWith("root", expect.anything(), expect.anything());
 		});
 
 		it("throws when cached vault folder was deleted", async () => {
-			// Root folder exists
-			mock.findChildByName.mockResolvedValueOnce(makeFolder("root-folder-id", REMOTE_VAULT_ROOT));
-			// Vault folder not found
-			mock.findChildByName.mockResolvedValueOnce(null);
+			// getFile fails (folder deleted)
+			mock.getFile.mockRejectedValueOnce(new Error("File not found"));
 
 			await expect(
-				resolveGDriveRemoteVault(mock.client, "My Vault", "deleted-uuid")
+				resolveGDriveRemoteVault(mock.client, "My Vault", "deleted-folder-id")
 			).rejects.toThrow("was deleted from Google Drive");
 		});
 	});
 
 	describe("vault name change", () => {
 		it("updates metadata.json when vault name differs", async () => {
-			// Root folder exists
-			mock.findChildByName.mockResolvedValueOnce(makeFolder("root-folder-id", REMOTE_VAULT_ROOT));
-			// Find vault folder
-			mock.findChildByName.mockResolvedValueOnce(makeFolder("vault-folder-id", "cached-uuid"));
+			// getFile succeeds
+			mock.getFile.mockResolvedValueOnce(makeFolder("vault-folder-id", "cached-uuid"));
 			// Find .smartsync
 			mock.findChildByName.mockResolvedValueOnce(makeFolder("ss-id", ".smartsync"));
 			// Find metadata.json
@@ -155,9 +157,12 @@ describe("resolveGDriveRemoteVault", () => {
 			// Upload updated metadata
 			mock.uploadFile.mockResolvedValueOnce(makeDriveFile({ id: "meta-id", name: "metadata.json" }));
 
-			const result = await resolveGDriveRemoteVault(mock.client, "New Name", "cached-uuid");
+			const result = await resolveGDriveRemoteVault(mock.client, "New Name", "vault-folder-id");
 
-			expect(result.remoteVaultId).toBe("cached-uuid");
+			expect(result.backendUpdates).toEqual({
+				remoteVaultFolderId: "vault-folder-id",
+				lastKnownVaultName: "New Name",
+			});
 			// Verify metadata was updated (uploadFile called with existingFileId)
 			expect(mock.uploadFile).toHaveBeenCalledWith(
 				"metadata.json", "ss-id",
@@ -184,8 +189,10 @@ describe("resolveGDriveRemoteVault", () => {
 
 			const result = await resolveGDriveRemoteVault(mock.client, "My Vault", undefined);
 
-			expect(result.remoteVaultId).toBe("test-uuid-1234");
-			expect(result.backendUpdates).toEqual({ remoteVaultFolderId: "new-vault-id" });
+			expect(result.backendUpdates).toEqual({
+				remoteVaultFolderId: "new-vault-id",
+				lastKnownVaultName: "My Vault",
+			});
 		});
 	});
 });

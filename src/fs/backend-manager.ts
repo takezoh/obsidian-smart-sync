@@ -4,7 +4,6 @@ import type { IFileSystem } from "./interface";
 import type { IBackendProvider } from "./backend";
 import type { Logger } from "../logging/logger";
 import { getBackendProvider } from "./registry";
-import { RemoteVaultStore } from "../sync/remote-vault";
 
 export interface BackendManagerDeps {
 	getSettings: () => SmartSyncSettings;
@@ -14,6 +13,7 @@ export interface BackendManagerDeps {
 	getVaultName: () => string;
 	onConnected: (remoteFs: IFileSystem) => void;
 	onDisconnected: () => void;
+	onIdentityChanged: () => Promise<void>;
 	notify: (message: string) => void;
 	refreshSettingsDisplay: () => void;
 }
@@ -21,7 +21,7 @@ export interface BackendManagerDeps {
 export class BackendManager {
 	private remoteFs: IFileSystem | null = null;
 	private backendProvider: IBackendProvider | null = null;
-	private remoteVaultStore: RemoteVaultStore | null = null;
+	private lastBackendIdentity: string | null = null;
 
 	constructor(private deps: BackendManagerDeps) {}
 
@@ -42,6 +42,17 @@ export class BackendManager {
 		this.backendProvider = provider;
 
 		try {
+			const newIdentity = provider.getIdentity(settings);
+			if (this.lastBackendIdentity !== null && newIdentity !== this.lastBackendIdentity) {
+				this.deps.getLogger().info("Backend identity changed", {
+					from: this.lastBackendIdentity,
+					to: newIdentity,
+				});
+				provider.resetTargetState?.(settings);
+				await this.deps.onIdentityChanged();
+			}
+			this.lastBackendIdentity = newIdentity;
+
 			this.remoteFs?.close?.()?.catch((e: unknown) => {
 				console.warn("Smart Sync: failed to close previous backend", e);
 			});
@@ -72,20 +83,21 @@ export class BackendManager {
 		settings: SmartSyncSettings,
 	): Promise<void> {
 		const vaultName = this.deps.getVaultName();
-		this.remoteVaultStore ??= new RemoteVaultStore(settings.vaultId);
-		const cachedId = await this.remoteVaultStore.getRemoteVaultId();
-		const lastKnownName = await this.remoteVaultStore.getLastKnownVaultName();
+		const type = provider.type;
+		const backendData = settings.backendData[type] as Record<string, unknown> | undefined;
+		const cachedFolderId = backendData?.remoteVaultFolderId as string | undefined;
+		const lastKnownName = backendData?.lastKnownVaultName as string | undefined;
 
-		// Skip if already linked and name unchanged
-		if (cachedId && lastKnownName === vaultName) return;
+		// Skip network call if already linked and name unchanged
+		if (cachedFolderId && lastKnownName === vaultName) {
+			return;
+		}
 
 		const result = await provider.resolveRemoteVault!(
-			this.deps.getApp(), settings, vaultName, cachedId, this.deps.getLogger()
+			this.deps.getApp(), settings, vaultName, this.deps.getLogger()
 		);
-		const type = provider.type;
 		settings.backendData[type] = { ...(settings.backendData[type] ?? {}), ...result.backendUpdates };
 		await this.deps.saveSettings();
-		await this.remoteVaultStore.save(result.remoteVaultId, vaultName);
 	}
 
 	/** Start the backend's auth/connection flow */
@@ -164,6 +176,9 @@ export class BackendManager {
 		settings.backendData[type] = resetData;
 		await this.deps.saveSettings();
 
+		await this.deps.onIdentityChanged();
+		this.lastBackendIdentity = null;
+
 		this.remoteFs = null;
 		this.deps.onDisconnected();
 
@@ -174,9 +189,6 @@ export class BackendManager {
 	close(): void {
 		this.remoteFs?.close?.()?.catch((e: unknown) => {
 			console.warn("Smart Sync: failed to close backend on unload", e);
-		});
-		this.remoteVaultStore?.close().catch((e: unknown) => {
-			console.warn("Smart Sync: failed to close remote vault store", e);
 		});
 	}
 }

@@ -62,6 +62,11 @@ export class SyncService {
 		await this.stateStore.close();
 	}
 
+	async clearSyncState(): Promise<void> {
+		this.deps.logger?.info("Clearing sync state");
+		await this.stateStore.clear();
+	}
+
 	shouldSync(): boolean {
 		const hasRemote = !!this.deps.remoteFs();
 		const isLocked = this.syncMutex.isLocked;
@@ -230,6 +235,27 @@ export class SyncService {
 		await this.resolveEmptyHashes(filtered, localFs, remoteFs);
 
 		const decisions = computeDecisions(filtered);
+
+		// Mass deletion safety net: abort if all local files would be deleted
+		const deletePropagateCount = decisions.filter(
+			(d) => d.decision === "remote_deleted_propagate"
+		).length;
+		const localFileCount = filtered.filter((e) => e.local).length;
+
+		if (
+			deletePropagateCount > 5 &&
+			deletePropagateCount === localFileCount
+		) {
+			this.deps.logger?.error("Mass deletion safety net triggered", {
+				deletePropagateCount,
+				localFileCount,
+			});
+			await this.stateStore.clear();
+			throw new Error(
+				`Aborting sync: all ${deletePropagateCount} local files would be deleted ` +
+					`(remote appears empty). Sync state has been reset — please sync again.`
+			);
+		}
 
 		// Show summary modal for bulk resolution when there are many conflicts
 		const conflictDecisions = decisions.filter(

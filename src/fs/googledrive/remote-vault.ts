@@ -10,49 +10,51 @@ const METADATA_FILE = "metadata.json";
 /**
  * Resolve or create a remote vault folder in Google Drive.
  *
- * Layout: Drive root / obsidian-smart-sync / {remoteVaultId} / .smartsync/metadata.json
+ * Layout: Drive root / obsidian-smart-sync / {uuid} / .smartsync/metadata.json
+ *
+ * The cached folder ID and last known vault name are read from settings.backendData
+ * by the caller (GoogleDriveProvider).
  */
 export async function resolveGDriveRemoteVault(
 	client: DriveClient,
 	vaultName: string,
-	cachedRemoteVaultId: string | undefined,
+	cachedFolderId: string | undefined,
 	logger?: Logger,
 ): Promise<RemoteVaultResolution> {
-	// 1. Find or create the root "obsidian-smart-sync" folder
+	// 1. If we have a cached folder ID, verify it still exists
+	if (cachedFolderId) {
+		return resolveLinked(client, cachedFolderId, vaultName, logger);
+	}
+
+	// 2. Find or create the root "obsidian-smart-sync" folder
 	const rootFolder = await findOrCreateFolder(client, "root", REMOTE_VAULT_ROOT);
 	logger?.debug("Remote vault root folder", { id: rootFolder.id });
 
-	// 2a. Cached path: linked device
-	if (cachedRemoteVaultId) {
-		return resolveLinked(client, rootFolder.id, cachedRemoteVaultId, vaultName, logger);
-	}
-
-	// 2b. Uncached path: new device — search for matching vault
+	// 3. Search for matching vault or create new one
 	return resolveNew(client, rootFolder.id, vaultName, logger);
 }
 
 async function resolveLinked(
 	client: DriveClient,
-	rootFolderId: string,
-	cachedRemoteVaultId: string,
+	cachedFolderId: string,
 	vaultName: string,
 	logger?: Logger,
 ): Promise<RemoteVaultResolution> {
-	// Find the vault folder by its UUID name
-	const vaultFolder = await client.findChildByName(rootFolderId, cachedRemoteVaultId, FOLDER_MIME);
-	if (!vaultFolder) {
+	// Verify the cached folder still exists
+	try {
+		await client.getFile(cachedFolderId);
+	} catch {
 		throw new Error(
-			`Remote vault folder "${cachedRemoteVaultId}" was deleted from Google Drive. ` +
+			"Remote vault folder was deleted from Google Drive. " +
 			"Please disconnect and reconnect to create a new remote vault."
 		);
 	}
 
 	// Update metadata.json if vault name changed
-	await updateMetadataIfNeeded(client, vaultFolder.id, vaultName, logger);
+	await updateMetadataIfNeeded(client, cachedFolderId, vaultName, logger);
 
 	return {
-		remoteVaultId: cachedRemoteVaultId,
-		backendUpdates: { remoteVaultFolderId: vaultFolder.id },
+		backendUpdates: { remoteVaultFolderId: cachedFolderId, lastKnownVaultName: vaultName },
 	};
 }
 
@@ -70,10 +72,9 @@ async function resolveNew(
 	for (const folder of folders) {
 		const metadata = await readMetadata(client, folder.id);
 		if (metadata && metadata.vaultName === vaultName) {
-			logger?.info("Found existing remote vault", { id: folder.name, vaultName });
+			logger?.info("Found existing remote vault", { folderId: folder.id, vaultName });
 			return {
-				remoteVaultId: folder.name,
-				backendUpdates: { remoteVaultFolderId: folder.id },
+				backendUpdates: { remoteVaultFolderId: folder.id, lastKnownVaultName: vaultName },
 			};
 		}
 	}
@@ -87,8 +88,7 @@ async function resolveNew(
 	await writeMetadata(client, smartsyncFolder.id, { vaultName });
 
 	return {
-		remoteVaultId,
-		backendUpdates: { remoteVaultFolderId: vaultFolder.id },
+		backendUpdates: { remoteVaultFolderId: vaultFolder.id, lastKnownVaultName: vaultName },
 	};
 }
 
