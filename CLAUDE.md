@@ -15,7 +15,7 @@ npm run lint       # eslint ./src/
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for details.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## Coding conventions
 

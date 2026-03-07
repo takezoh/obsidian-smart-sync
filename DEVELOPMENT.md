@@ -30,7 +30,7 @@ npm run lint       # Lint (eslint ./src/)
 
 ## Architecture
 
-See [architecture.md](architecture.md) for the full technical design.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical design.
 
 ## Coding conventions
 

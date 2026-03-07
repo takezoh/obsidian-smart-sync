@@ -19,11 +19,23 @@ Currently supports Google Drive as a storage backend.
 - **Status bar**: Real-time sync status display (Synced / Syncing... / Sync error / Not connected)
 - **Ribbon icon**: One-click manual sync
 
-## Backend setup
+## Google Drive setup
 
-See backend-specific setup instructions:
+1. Open the plugin settings (**Settings → Smart Sync**)
+2. Click the **Connect to Google Drive** button
+3. Complete the Google account authorization in the browser
+4. The plugin automatically receives the callback via `obsidian://` protocol handler
+5. A remote vault folder is created automatically in your Google Drive
 
-- **Google Drive**: [docs/google-drive-setup.md](docs/google-drive-setup.md)
+If the automatic callback fails, try disconnecting and reconnecting from the plugin settings.
+
+The first sync after connecting performs a full scan of the Drive folder. This may take some time depending on vault size. Subsequent syncs fetch only changes and are much faster.
+
+### Troubleshooting
+
+- **Authentication completes but sync doesn't start**: Restart the plugin (disable → enable in Community plugins settings), then try syncing manually
+- **Token error after successful authorization**: Check that the device has a stable network connection — token exchange requires connectivity immediately after authorization
+- **Protocol handler not triggered**: Try disconnecting and reconnecting from the plugin settings
 
 ## Settings
 
