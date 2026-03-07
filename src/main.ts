@@ -176,14 +176,11 @@ export default class SmartSyncPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const saved = (await this.loadData()) as Record<string, unknown> | null;
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			saved as Partial<SmartSyncSettings>,
+			(await this.loadData()) as Partial<SmartSyncSettings>,
 		);
-		// Remove legacy field that may linger in saved data
-		delete (this.settings as unknown as Record<string, unknown>)["mobileIgnorePatterns"];
 
 		let needsSave = false;
 
@@ -193,17 +190,8 @@ export default class SmartSyncPlugin extends Plugin {
 			needsSave = true;
 		}
 
-		// Migrate: adopt legacy mobileIgnorePatterns on mobile
-		const legacyMobile = saved?.["mobileIgnorePatterns"];
-		if (Array.isArray(legacyMobile) && legacyMobile.length > 0) {
-			if (Platform.isMobile && this.settings.ignorePatterns.length === 0) {
-				this.settings.ignorePatterns = legacyMobile as string[];
-			}
-			needsSave = true;
-		}
-
 		// Apply platform-specific defaults for fresh installs
-		if (!saved?.["ignorePatterns"] && !legacyMobile && this.settings.ignorePatterns.length === 0) {
+		if (this.settings.ignorePatterns.length === 0) {
 			this.settings.ignorePatterns = Platform.isMobile
 				? [...DEFAULT_MOBILE_IGNORE_PATTERNS]
 				: [...DEFAULT_DESKTOP_IGNORE_PATTERNS];
