@@ -17,38 +17,6 @@ npm run lint       # eslint ./src/
 
 See [docs/architecture.md](docs/architecture.md) for details.
 
-```
-src/
-├── main.ts              # Entry point (lifecycle only, delegates logic)
-├── settings.ts          # SmartSyncSettings type & defaults
-├── fs/
-│   ├── types.ts         # FileEntity
-│   ├── interface.ts     # IFileSystem (name, list, stat, read, write, mkdir, delete, rename)
-│   ├── auth.ts          # IAuthProvider
-│   ├── backend.ts       # IBackendProvider
-│   ├── registry.ts      # Backend registry
-│   ├── local/           # LocalFs — Obsidian Vault API wrapper; DotPathAdapter — dot-prefixed path adapter
-│   ├── googledrive/     # GoogleDriveFs — Drive REST API v3 + OAuth PKCE
-│   └── mock/            # MockFs — in-memory for testing
-├── sync/
-│   ├── types.ts         # SyncRecord, MixedEntity, DecisionType, ConflictStrategy, SyncDecision
-│   ├── engine.ts        # buildMixedEntities() + computeDecisions() — 3-state decision
-│   ├── executor.ts      # SyncExecutor — Decision → IFileSystem operations
-│   ├── service.ts       # SyncService — orchestration, retry, mutual exclusion
-│   ├── state.ts         # SyncStateStore — IndexedDB
-│   ├── conflict.ts      # resolveConflict() — 6 strategies
-│   └── merge.ts         # threeWayMerge() — node-diff3
-├── store/
-│   ├── idb-helper.ts    # IDBHelper — shared IndexedDB lifecycle & transaction helper
-│   └── metadata-store.ts # MetadataStore<T> — generic IndexedDB metadata cache
-├── queue/async-queue.ts # AsyncMutex
-├── utils/               # sha256(), isIgnored()
-├── ui/                  # SettingTab, IBackendSettingsRenderer, ConflictModal, ConflictSummaryModal
-└── __mocks__/           # obsidian.ts, sync-test-helpers.ts
-```
-
-Dependency direction: `main.ts` → `SyncService` → `engine/executor` → `IFileSystem`. The sync engine is backend-agnostic.
-
 ## Coding conventions
 
 - TypeScript strict mode
