@@ -201,7 +201,6 @@ export async function updateSyncRecord(
 			const content = await ctx.localFs.read(path);
 			await ctx.stateStore.putContent(path, content);
 		} catch (err) {
-			console.warn(`Smart Sync: failed to store content for 3-way merge (${path}):`, err);
 			ctx.logger?.warn("Failed to store content for 3-way merge", { path, error: err instanceof Error ? err.message : String(err) });
 		}
 	}

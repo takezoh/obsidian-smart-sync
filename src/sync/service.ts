@@ -111,7 +111,6 @@ export class SyncService {
 					} catch (err) {
 						lastError = err;
 						const { status, retryAfter } = getErrorInfo(err);
-						console.error("Smart Sync: sync error", { status, err });
 						this.deps.logger?.error(
 							`Sync error (attempt ${attempt}/${MAX_RETRIES})`,
 							{ status, message: err instanceof Error ? err.message : String(err) },
@@ -158,10 +157,6 @@ export class SyncService {
 							? lastError.message
 							: "Unknown error";
 					this.deps.notify(`Sync error: ${msg}`);
-					console.error(
-						"Smart Sync error after retries:",
-						lastError
-					);
 					this.deps.logger?.error("Sync failed after retries", { message: msg });
 					await this.deps.logger?.flush();
 					return;
@@ -332,10 +327,6 @@ export class SyncService {
 				`${count} file(s) merged with conflict markers. Please review and resolve manually.`,
 				10000
 			);
-			console.warn(
-				"Smart Sync: files with conflict markers:",
-				result.mergeConflictPaths
-			);
 			this.deps.logger?.warn("Files with conflict markers", {
 				paths: result.mergeConflictPaths,
 			});
@@ -354,7 +345,6 @@ export class SyncService {
 			let errorMsg = `Sync errors:\n${shown.join("\n")}`;
 			if (more > 0) errorMsg += `\n...and ${more} more`;
 			this.deps.notify(errorMsg, 10000);
-			console.error("Smart Sync errors:", result.errors);
 			this.deps.logger?.error("Per-file sync errors", { errors: result.errors });
 			// Per-file errors are reported via notify + partial_error status.
 			// Transport errors (network, 5xx) throw from the FS layer directly

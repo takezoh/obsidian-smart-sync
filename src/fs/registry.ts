@@ -10,7 +10,7 @@ const providers: IBackendProvider[] = [new GoogleDriveProvider()];
 const providerMap = new Map<string, IBackendProvider>();
 for (const p of providers) {
 	if (providerMap.has(p.type)) {
-		console.warn(`Smart Sync: duplicate backend type "${p.type}" — keeping first registration`);
+		// Defensive: should never happen at runtime with a single provider
 		continue;
 	}
 	providerMap.set(p.type, p);

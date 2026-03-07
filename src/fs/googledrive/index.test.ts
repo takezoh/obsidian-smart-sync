@@ -274,7 +274,7 @@ describe("GoogleDriveFs multi-parent resolution", () => {
 describe("GoogleDriveFs circular parent reference", () => {
 	it("handles mutual cycle (A→B→A) without infinite loop", async () => {
 		const { GoogleDriveFs } = await import("./index");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const mockLogger = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
 
 		const mockClient = {
 			listAllFiles: vi.fn().mockResolvedValue([
@@ -284,21 +284,20 @@ describe("GoogleDriveFs circular parent reference", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
 		} as never;
 
-		const fs = new GoogleDriveFs(mockClient, "root");
+		const fs = new GoogleDriveFs(mockClient, "root", mockLogger);
 		const files = await fs.list();
 
 		// list() completes without hanging
 		expect(files.length).toBe(2);
-		expect(warnSpy).toHaveBeenCalledWith(
-			expect.stringContaining("circular parent reference detected")
+		expect((mockLogger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
+			expect.stringContaining("Circular parent reference"),
+			expect.any(Object)
 		);
-
-		warnSpy.mockRestore();
 	});
 
 	it("handles self-referencing parent (X→X) without infinite loop", async () => {
 		const { GoogleDriveFs } = await import("./index");
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const mockLogger = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
 
 		const mockClient = {
 			listAllFiles: vi.fn().mockResolvedValue([
@@ -307,16 +306,15 @@ describe("GoogleDriveFs circular parent reference", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
 		} as never;
 
-		const fs = new GoogleDriveFs(mockClient, "root");
+		const fs = new GoogleDriveFs(mockClient, "root", mockLogger);
 		const files = await fs.list();
 
 		expect(files.length).toBe(1);
 		expect(files[0]!.path).toBe("selfRef");
-		expect(warnSpy).toHaveBeenCalledWith(
-			expect.stringContaining("circular parent reference detected")
+		expect((mockLogger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
+			expect.stringContaining("Circular parent reference"),
+			expect.any(Object)
 		);
-
-		warnSpy.mockRestore();
 	});
 });
 

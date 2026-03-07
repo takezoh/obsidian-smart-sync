@@ -58,9 +58,6 @@ export async function resolveConflict(
 		case "ask":
 			// Handled by executor via onConflict callback before reaching here.
 			// If we get here, it means the callback was not provided — fall back safely.
-			console.warn(
-				`Smart Sync: "ask" strategy reached resolveConflict without callback for "${path}", falling back to keep_newer`
-			);
 			logger?.warn("Ask strategy reached resolveConflict without callback, falling back to keep_newer", { path });
 			return keepNewer(path, localFs, remoteFs, local, remote);
 	}
@@ -246,7 +243,6 @@ async function attemptThreeWayMerge(
 	try {
 		mergeResult = threeWayMerge(baseText, localText, remoteText);
 	} catch (mergeErr) {
-		console.warn(`Smart Sync: 3-way merge failed for "${path}", falling back:`, mergeErr);
 		logger?.warn("3-way merge failed, falling back", { path, error: mergeErr instanceof Error ? mergeErr.message : String(mergeErr) });
 		const fb = await resolveFallback();
 		return resolveConflict(ctx, fb);
@@ -272,7 +268,6 @@ async function attemptThreeWayMerge(
 		try {
 			await localFs.write(path, encoder.encode(localText).buffer as ArrayBuffer, local.mtime);
 		} catch (restoreErr) {
-			console.error(`Smart Sync: failed to restore local after merge failure (${path}):`, restoreErr);
 			logger?.error("Failed to restore local after merge failure", { path, error: restoreErr instanceof Error ? restoreErr.message : String(restoreErr) });
 		}
 		throw remoteWriteErr;
@@ -312,7 +307,6 @@ export async function buildSyncRecord(
 			const content = await localFs.read(path);
 			await stateStore.putContent(path, content);
 		} catch (err) {
-			console.warn(`Smart Sync: failed to store content for 3-way merge (${path}):`, err);
 			logger?.warn("Failed to store content for 3-way merge", { path, error: err instanceof Error ? err.message : String(err) });
 		}
 	}

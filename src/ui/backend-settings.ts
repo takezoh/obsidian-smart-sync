@@ -35,9 +35,7 @@ const renderers: IBackendSettingsRenderer[] = [
 const rendererMap = new Map<string, IBackendSettingsRenderer>();
 for (const r of renderers) {
 	if (rendererMap.has(r.backendType)) {
-		console.warn(
-			`Smart Sync: duplicate settings renderer for "${r.backendType}" — keeping first registration`
-		);
+		// Defensive: should never happen at runtime with a single renderer
 		continue;
 	}
 	rendererMap.set(r.backendType, r);

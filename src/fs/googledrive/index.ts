@@ -245,7 +245,6 @@ export class GoogleDriveFs implements IFileSystem {
 		// (applyIncrementalChanges may have updated the cache during phase 2)
 		await this.cacheMutex.run(async () => {
 			if (existingId && this.cache.getFile(path)?.id !== existingId) {
-				console.warn(`Smart Sync: skipping stale cache update for write("${path}") — ID changed during upload`);
 				this.logger?.warn("Skipping stale cache update for write", { path });
 				return;
 			}
@@ -316,7 +315,6 @@ export class GoogleDriveFs implements IFileSystem {
 			if (this.cache.getFile(path)?.id === fileId) {
 				this.cache.removePath(path);
 			} else {
-				console.warn(`Smart Sync: skipping stale cache update for delete("${path}") — ID changed during deletion`);
 				this.logger?.warn("Skipping stale cache update for delete", { path });
 			}
 		});
@@ -384,7 +382,6 @@ export class GoogleDriveFs implements IFileSystem {
 		// (applyIncrementalChanges may have updated the cache during phase 2)
 		await this.cacheMutex.run(async () => {
 			if (this.cache.getFile(oldPath)?.id !== fileId) {
-				console.warn(`Smart Sync: skipping stale cache update for rename("${oldPath}" → "${newPath}") — ID changed during rename`);
 				this.logger?.warn("Skipping stale cache update for rename", { oldPath, newPath });
 				return;
 			}

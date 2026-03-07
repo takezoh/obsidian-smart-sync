@@ -173,7 +173,6 @@ export default class SmartSyncPlugin extends Plugin {
 		this.logger.dispose();
 		this.backendManager.close();
 		this.syncService.close().catch((e) => {
-			console.error("Smart Sync: failed to close sync service", e);
 			this.logger.error("Failed to close sync service", { message: e instanceof Error ? e.message : String(e) });
 		});
 	}

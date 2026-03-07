@@ -54,7 +54,7 @@ export class BackendManager {
 			this.lastBackendIdentity = newIdentity;
 
 			this.remoteFs?.close?.()?.catch((e: unknown) => {
-				console.warn("Smart Sync: failed to close previous backend", e);
+				this.deps.getLogger().warn("Failed to close previous backend", { error: e instanceof Error ? e.message : String(e) });
 			});
 			if (!provider.isConnected(settings)) {
 				this.remoteFs = null;
@@ -73,7 +73,6 @@ export class BackendManager {
 				this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
 			}
 		} catch (e) {
-			console.error("Smart Sync: failed to initialize backend", e);
 			this.deps.getLogger().error("Failed to initialize backend", { message: e instanceof Error ? e.message : String(e) });
 		}
 	}
@@ -188,7 +187,7 @@ export class BackendManager {
 	/** Release resources */
 	close(): void {
 		this.remoteFs?.close?.()?.catch((e: unknown) => {
-			console.warn("Smart Sync: failed to close backend on unload", e);
+			this.deps.getLogger().warn("Failed to close backend on unload", { error: e instanceof Error ? e.message : String(e) });
 		});
 	}
 }

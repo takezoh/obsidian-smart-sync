@@ -6,6 +6,8 @@ Detects file creation, modification, deletion, and renames on both local and rem
 
 Currently supports Google Drive as a storage backend.
 
+> **Requires a Google account.** This plugin communicates with Google Drive API (`googleapis.com`) for file sync and with an auth server (`auth-smartsync.takezo.dev`) for OAuth token exchange. No vault data is sent to the auth server — it only handles authentication tokens.
+
 ## Features
 
 - **Bidirectional sync**: Push local changes to remote, pull remote changes to local

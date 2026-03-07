@@ -176,7 +176,6 @@ export class GoogleAuth {
 			});
 		} catch {
 			// Best-effort: log but don't throw — local cleanup still proceeds
-			console.warn("Smart Sync: failed to revoke Google token (non-fatal)");
 			this.logger?.warn("Failed to revoke Google token (non-fatal)");
 		}
 	}

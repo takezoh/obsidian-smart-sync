@@ -102,6 +102,16 @@ export class Logger {
 			line += ` ${JSON.stringify(context)}`;
 		}
 		this.buffer.push(line);
+
+		// Mirror to developer console
+		const consoleFn = level === "error" ? console.error
+			: level === "warn" ? console.warn
+			: console.debug;
+		if (context) {
+			consoleFn(`Smart Sync: ${message}`, context);
+		} else {
+			consoleFn(`Smart Sync: ${message}`);
+		}
 	}
 
 	async flush(): Promise<void> {

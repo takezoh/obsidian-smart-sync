@@ -187,7 +187,6 @@ export class DriveMetadataCache {
 		if (cached !== undefined) return cached;
 
 		if (visiting.has(file.id)) {
-			console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
 			this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
 			resolvedPaths.set(file.id, file.name);
 			return file.name;
@@ -201,7 +200,6 @@ export class DriveMetadataCache {
 		const parentId = this.findRelevantParentId(file.parents, byId);
 		if (!parentId || parentId === this.rootFolderId || parentId === file.id) {
 			if (parentId === file.id) {
-				console.warn(`Smart Sync: circular parent reference detected for "${file.name}" (id=${file.id}), truncating path`);
 				this.logger?.warn("Circular parent reference detected, truncating path", { fileName: file.name, fileId: file.id });
 			}
 			resolvedPaths.set(file.id, file.name);
