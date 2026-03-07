@@ -58,6 +58,7 @@ Example — sync only JSON config files and plugins:
 .obsidian/**
 !.obsidian/*.json
 .obsidian/workspace.json
+.obsidian/workspace-mobile.json
 !.obsidian/plugins/
 !.obsidian/plugins/**
 .obsidian/plugins/*/data.json
