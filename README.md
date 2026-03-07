@@ -46,6 +46,23 @@ See backend-specific setup instructions:
 | `three_way_merge` | Attempts 3-way merge (text files only, up to 1 MB). Falls back on failure |
 | `ask` | Shows a modal for each conflict. Displays a summary modal for 5+ conflicts |
 
+### Syncing the config directory
+
+To sync Obsidian's config directory (`.obsidian/`), add it to **Dot-prefixed paths to sync** and use **Ignore patterns** to select what to include.
+
+> **⚠️ Warning**: The config directory contains Obsidian's internal metadata. Syncing it across devices may cause settings loss, layout corruption, or plugin malfunction. Use narrow ignore patterns and test on a backup vault first.
+
+Example — sync only JSON config files and plugins:
+
+```
+.obsidian/**
+!.obsidian/*.json
+.obsidian/workspace.json
+!.obsidian/plugins/
+!.obsidian/plugins/**
+.obsidian/plugins/*/data.json
+```
+
 ## Commands
 
 | Command | Description |
