@@ -4,23 +4,91 @@ import type { GoogleDriveAuthProviderInternal } from "./test-helpers";
 
 vi.mock("obsidian");
 
-describe("parseAuthInput (via provider)", () => {
-	it("rejects empty string", async () => {
-		const { GoogleDriveProvider } = await import("./provider");
-		const provider = new GoogleDriveProvider();
+describe("GoogleAuth.handleAuthCallback", () => {
+	it("stores tokens when state matches", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+		auth.setAuthState("my-csrf");
 
-		await expect(
-			provider.auth.completeAuth("", {})
-		).rejects.toThrow("Authorization code is empty");
+		auth.handleAuthCallback({
+			access_token: "access-123",
+			refresh_token: "refresh-456",
+			expires_in: "3600",
+			state: "my-csrf",
+		});
+
+		const tokens = auth.getTokenState();
+		expect(tokens.accessToken).toBe("access-123");
+		expect(tokens.refreshToken).toBe("refresh-456");
+		expect(tokens.accessTokenExpiry).toBeGreaterThan(Date.now());
 	});
 
-	it("rejects whitespace-only string", async () => {
-		const { GoogleDriveProvider } = await import("./provider");
-		const provider = new GoogleDriveProvider();
+	it("throws when authState is null", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
 
-		await expect(
-			provider.auth.completeAuth("   ", {})
-		).rejects.toThrow("Authorization code is empty");
+		expect(() =>
+			auth.handleAuthCallback({
+				access_token: "token",
+				expires_in: "3600",
+				state: "some-state",
+			})
+		).toThrow("OAuth state is missing");
+	});
+
+	it("throws when state does not match", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+		auth.setAuthState("correct-state");
+
+		expect(() =>
+			auth.handleAuthCallback({
+				access_token: "token",
+				expires_in: "3600",
+				state: "wrong-state",
+			})
+		).toThrow("State mismatch");
+	});
+
+	it("throws when state parameter is omitted", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+		auth.setAuthState("expected-state");
+
+		expect(() =>
+			auth.handleAuthCallback({
+				access_token: "token",
+				expires_in: "3600",
+			})
+		).toThrow("State mismatch");
+	});
+
+	it("clears authState after successful callback", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+		auth.setAuthState("csrf");
+
+		auth.handleAuthCallback({
+			access_token: "token",
+			expires_in: "3600",
+			state: "csrf",
+		});
+
+		expect(auth.getAuthState()).toBeNull();
+	});
+});
+
+describe("GoogleAuth.getAuthorizationUrl", () => {
+	it("returns a Google OAuth URL with state but no PKCE", async () => {
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+
+		const url = auth.getAuthorizationUrl();
+
+		expect(url).toContain("accounts.google.com");
+		expect(url).toContain("state=");
+		expect(url).not.toContain("code_challenge");
+		expect(auth.getAuthState()).not.toBeNull();
 	});
 });
 
@@ -43,7 +111,6 @@ describe("GoogleAuth.getAccessToken concurrency", () => {
 		const auth = new GoogleAuth();
 		auth.setTokens("refresh-token", "", 0);
 
-		// Fire 3 concurrent calls
 		const [t1, t2, t3] = await Promise.all([
 			auth.getAccessToken(),
 			auth.getAccessToken(),
@@ -59,72 +126,36 @@ describe("GoogleAuth.getAccessToken concurrency", () => {
 	});
 });
 
-describe("GoogleAuth.exchangeCode state validation", () => {
-	it("throws when authState is null", async () => {
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		// authState is null by default (no getAuthorizationUrl called)
-		await expect(auth.exchangeCode("some-code", "some-state")).rejects.toThrow(
-			"OAuth state is missing"
-		);
-	});
-
-	it("throws when state does not match", async () => {
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setPkceState("verifier", "correct-state");
-		await expect(auth.exchangeCode("some-code", "wrong-state")).rejects.toThrow(
-			"State mismatch"
-		);
-	});
-
-	it("throws when state parameter is omitted", async () => {
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setPkceState("verifier", "expected-state");
-		await expect(auth.exchangeCode("some-code")).rejects.toThrow(
-			"State mismatch"
-		);
-	});
-});
-
-describe("GoogleDriveProvider.completeAuth PKCE restoration", () => {
-	it("restores PKCE state on existing auth that lacks it", async () => {
-		const mockRequestUrl = (await spyRequestUrl()).mockResolvedValue(mockRes({
-			access_token: "new-access",
-			expires_in: 3600,
-			token_type: "Bearer",
-			refresh_token: "new-refresh",
-		}));
-
+describe("GoogleDriveProvider.completeAuth", () => {
+	it("restores CSRF state on existing auth that lacks it", async () => {
 		const { GoogleDriveProvider } = await import("./provider");
 		const { GoogleAuth } = await import("./auth");
 		const provider = new GoogleDriveProvider();
 		const authInternal = provider.auth as unknown as GoogleDriveAuthProviderInternal;
 
 		const backendData = {
-			pendingCodeVerifier: "saved-verifier",
 			pendingAuthState: "saved-state",
 		};
 
-		// Create a provider with an existing auth that has no PKCE state
 		authInternal.googleAuth = new GoogleAuth();
-
-		// Verify auth initially has no PKCE state
 		expect(authInternal.googleAuth.getAuthState()).toBeNull();
 
-		// completeAuth should restore PKCE state from backendData then exchange
 		const result = await provider.auth.completeAuth(
-			"http://127.0.0.1/callback?code=test-code&state=saved-state",
+			"https://callback?access_token=new-access&refresh_token=new-refresh&expires_in=3600&state=saved-state",
 			backendData
 		);
 
-		// exchangeCode should have succeeded (state matched after restoration)
 		expect(result.refreshToken).toBe("new-refresh");
-		// State is cleared after successful exchange
 		expect(authInternal.googleAuth.getAuthState()).toBeNull();
+	});
 
-		mockRequestUrl.mockRestore();
+	it("rejects empty callback", async () => {
+		const { GoogleDriveProvider } = await import("./provider");
+		const provider = new GoogleDriveProvider();
+
+		await expect(
+			provider.auth.completeAuth("", {})
+		).rejects.toThrow("Auth callback is empty");
 	});
 });
 
@@ -135,7 +166,6 @@ describe("GoogleDriveAuthProvider.getOrCreateGoogleAuth", () => {
 		const provider = new GoogleDriveProvider();
 		const authInternal = provider.auth as unknown as GoogleDriveAuthProviderInternal;
 
-		// Set up existing auth with old refresh token
 		const oldAuth = new GoogleAuth();
 		oldAuth.setTokens("old-refresh", "", 0);
 		authInternal.googleAuth = oldAuth;
@@ -147,11 +177,9 @@ describe("GoogleDriveAuthProvider.getOrCreateGoogleAuth", () => {
 			remoteVaultFolderId: "folder",
 			lastKnownVaultName: "",
 			changesStartPageToken: "",
-			pendingCodeVerifier: "",
 			pendingAuthState: "",
 		};
 
-		// The refreshToken mismatch should create a new auth instance
 		const auth = provider.auth.getOrCreateGoogleAuth(data);
 		expect(auth).not.toBe(oldAuth);
 	});
@@ -193,7 +221,6 @@ describe("GoogleAuth.revokeToken", () => {
 		const auth = new GoogleAuth();
 		auth.setTokens("token", "", 0);
 
-		// Should not throw
 		await expect(auth.revokeToken()).resolves.toBeUndefined();
 
 		mockRequestUrl.mockRestore();

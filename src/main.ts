@@ -92,15 +92,18 @@ export default class SmartSyncPlugin extends Plugin {
 		this.settingTab = new SmartSyncSettingTab(this.app, this);
 		this.addSettingTab(this.settingTab);
 
-		// Handle OAuth callback via obsidian://smart-sync-auth?code=xxx&state=yyy
+		// Handle OAuth callback via obsidian://smart-sync-auth?access_token=...&refresh_token=...&expires_in=...&state=...
 		this.registerObsidianProtocolHandler("smart-sync-auth", (params) => {
-			if (!params.code) {
-				new Notice("Authorization failed: no code received");
+			if (!params.access_token) {
+				new Notice("Authorization failed: no access token received");
 				return;
 			}
-			// Synthetic URL to pass code/state to completeAuth(), which expects a callback URL string
-			const url = `https://callback?code=${encodeURIComponent(params.code)}${params.state ? `&state=${encodeURIComponent(params.state)}` : ""}`;
-			void this.backendManager.completeBackendConnect(url);
+			// Synthetic URL to pass tokens to completeAuth(), which parses callback URL params
+			const url = new URL("https://callback");
+			for (const [key, value] of Object.entries(params)) {
+				url.searchParams.set(key, value);
+			}
+			void this.backendManager.completeBackendConnect(url.toString());
 		});
 
 		// Initialize backend if configured

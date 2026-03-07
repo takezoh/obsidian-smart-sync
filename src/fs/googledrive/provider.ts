@@ -22,7 +22,6 @@ export interface GoogleDriveBackendData {
 	accessToken: string;
 	accessTokenExpiry: number;
 	changesStartPageToken: string;
-	pendingCodeVerifier: string;
 	pendingAuthState: string;
 }
 
@@ -33,7 +32,6 @@ const DEFAULT_GDRIVE_DATA: GoogleDriveBackendData = {
 	accessToken: "",
 	accessTokenExpiry: 0,
 	changesStartPageToken: "",
-	pendingCodeVerifier: "",
 	pendingAuthState: "",
 };
 
@@ -60,10 +58,9 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 		try {
 			this.googleAuth = new GoogleAuth();
 
-			const url = await this.googleAuth.getAuthorizationUrl();
+			const url = this.googleAuth.getAuthorizationUrl();
 
-			// Persist PKCE state so it survives plugin reload
-			const pendingCodeVerifier = this.googleAuth.getCodeVerifier() ?? "";
+			// Persist CSRF state so it survives plugin reload
 			const pendingAuthState = this.googleAuth.getAuthState() ?? "";
 
 			if (Platform.isMobile) {
@@ -74,10 +71,10 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 				window.open(url);
 			}
 			new Notice(
-				"Complete authorization in your browser, then paste the code in settings"
+				"Complete authorization in your browser"
 			);
 
-			return { pendingCodeVerifier, pendingAuthState };
+			return { pendingAuthState };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			new Notice(`Failed to start authorization: ${msg}`);
@@ -93,20 +90,19 @@ export class GoogleDriveAuthProvider implements IAuthProvider {
 		if (!this.googleAuth) {
 			this.googleAuth = new GoogleAuth();
 		}
-		// Always restore PKCE state if auth lacks it (survives plugin reload)
-		if (!this.googleAuth.getAuthState() && data.pendingCodeVerifier && data.pendingAuthState) {
-			this.googleAuth.setPkceState(data.pendingCodeVerifier, data.pendingAuthState);
+		// Always restore CSRF state if auth lacks it (survives plugin reload)
+		if (!this.googleAuth.getAuthState() && data.pendingAuthState) {
+			this.googleAuth.setAuthState(data.pendingAuthState);
 		}
 
-		// Parse input: may be a bare code or a full callback URL containing code + state
-		const { code, state } = parseAuthInput(input);
-		await this.googleAuth.exchangeCode(code, state);
+		// Parse tokens from the auth server callback URL
+		const params = parseAuthCallbackParams(input);
+		this.googleAuth.handleAuthCallback(params);
 		const tokens = this.googleAuth.getTokenState();
 		return {
 			refreshToken: tokens.refreshToken,
 			accessToken: tokens.accessToken,
 			accessTokenExpiry: tokens.accessTokenExpiry,
-			pendingCodeVerifier: "",
 			pendingAuthState: "",
 		};
 	}
@@ -235,29 +231,40 @@ export class GoogleDriveProvider implements IBackendProvider {
 	}
 }
 
+/** Auth callback parameters returned by the auth server */
+interface AuthCallbackParams {
+	access_token: string;
+	refresh_token?: string;
+	expires_in: string;
+	state?: string;
+}
+
 /**
- * Parse auth input which may be a bare authorization code or a full callback URL.
- * Returns the extracted code and optional state parameter.
+ * Parse auth callback input (URL from auth server containing tokens).
+ * The auth server redirects to obsidian://smart-sync-auth?access_token=...&refresh_token=...&expires_in=...&state=...
  */
-function parseAuthInput(input: string): { code: string; state?: string } {
+function parseAuthCallbackParams(input: string): AuthCallbackParams {
 	const trimmed = input.trim();
-
-	// Check if input looks like a URL
-	if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-		try {
-			const url = new URL(trimmed);
-			const code = url.searchParams.get("code");
-			const state = url.searchParams.get("state") ?? undefined;
-			if (code) {
-				return { code, state };
-			}
-		} catch {
-			// Not a valid URL, treat as bare code
-		}
-	}
-
 	if (!trimmed) {
-		throw new Error("Authorization code is empty");
+		throw new Error("Auth callback is empty");
 	}
-	return { code: trimmed };
+
+	try {
+		const url = new URL(trimmed);
+		const accessToken = url.searchParams.get("access_token");
+		if (!accessToken) {
+			throw new Error("Missing access_token in auth callback");
+		}
+		return {
+			access_token: accessToken,
+			refresh_token: url.searchParams.get("refresh_token") ?? undefined,
+			expires_in: url.searchParams.get("expires_in") ?? "3600",
+			state: url.searchParams.get("state") ?? undefined,
+		};
+	} catch (e) {
+		if (e instanceof Error && e.message.includes("access_token")) {
+			throw e;
+		}
+		throw new Error("Invalid auth callback URL");
+	}
 }

@@ -1,21 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from 'node:module';
-import { readFileSync } from 'node:fs';
-
-// Load .env file if present (for local development)
-try {
-	const envFile = readFileSync('.env', 'utf-8');
-	for (const line of envFile.split('\n')) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith('#')) continue;
-		const eqIdx = trimmed.indexOf('=');
-		if (eqIdx === -1) continue;
-		const key = trimmed.slice(0, eqIdx).trim();
-		const value = trimmed.slice(eqIdx + 1).trim();
-		if (!process.env[key]) process.env[key] = value;
-	}
-} catch { /* no .env file */ }
 
 const banner =
 `/*
@@ -26,19 +11,7 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
-const requiredEnvVars = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"];
-for (const name of requiredEnvVars) {
-	if (!process.env[name]) {
-		console.error(`ERROR: Environment variable ${name} is not set.`);
-		process.exit(1);
-	}
-}
-
 const context = await esbuild.context({
-	define: {
-		"process.env.GOOGLE_CLIENT_ID": JSON.stringify(process.env.GOOGLE_CLIENT_ID),
-		"process.env.GOOGLE_CLIENT_SECRET": JSON.stringify(process.env.GOOGLE_CLIENT_SECRET),
-	},
 	banner: {
 		js: banner,
 	},

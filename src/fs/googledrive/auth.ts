@@ -1,21 +1,19 @@
 import { requestUrl } from "obsidian";
-import type { TokenResponse } from "./types";
 import type { Logger } from "../../logging/logger";
 import { assertTokenResponse } from "./types";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const AUTH_SERVER_URL = "https://auth-smartsync.takezo.dev";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
-const REDIRECT_URI = "https://smartsync.takezo.dev/callback/";
+const REDIRECT_URI = `${AUTH_SERVER_URL}/callback`;
 
-// Injected at build time via esbuild define (see esbuild.config.mjs)
-const GOOGLE_CLIENT_ID: string = process.env.GOOGLE_CLIENT_ID ?? "";
-const GOOGLE_CLIENT_SECRET: string = process.env.GOOGLE_CLIENT_SECRET ?? "";
+const GOOGLE_CLIENT_ID = "135801498656-lfjor2ml3v26t9l63mkoka0bndgl9eue.apps.googleusercontent.com";
 
 /**
  * Handles OAuth 2.0 authentication for Google Drive.
- * Uses PKCE (S256) and loopback redirect for security.
- * Exchanges tokens directly with Google's token endpoint (desktop OAuth client).
+ * Token exchange is handled server-side by auth-smartsync.takezo.dev
+ * (confidential client with client_secret). The plugin only manages
+ * CSRF state verification and token storage.
  */
 export class GoogleAuth {
 	private accessToken = "";
@@ -24,8 +22,6 @@ export class GoogleAuth {
 	private refreshPromise: Promise<string> | null = null;
 	private logger?: Logger;
 
-	/** PKCE code verifier for the current auth flow */
-	private codeVerifier: string | null = null;
 	/** Anti-CSRF state parameter for the current auth flow */
 	private authState: string | null = null;
 
@@ -47,12 +43,10 @@ export class GoogleAuth {
 
 	/**
 	 * Generate the OAuth authorization URL for the user to visit.
-	 * Uses PKCE (S256) and a state parameter for security.
+	 * Uses a random state parameter for CSRF protection.
 	 */
-	async getAuthorizationUrl(): Promise<string> {
-		this.codeVerifier = generateRandomString(64);
+	getAuthorizationUrl(): string {
 		this.authState = generateRandomString(32);
-		const codeChallenge = await computeS256Challenge(this.codeVerifier);
 
 		const params = new URLSearchParams({
 			client_id: GOOGLE_CLIENT_ID,
@@ -61,8 +55,6 @@ export class GoogleAuth {
 			scope: SCOPES,
 			access_type: "offline",
 			prompt: "consent",
-			code_challenge: codeChallenge,
-			code_challenge_method: "S256",
 			state: this.authState,
 		});
 		return `${GOOGLE_AUTH_URL}?${params.toString()}`;
@@ -73,66 +65,46 @@ export class GoogleAuth {
 		return this.authState;
 	}
 
-	/** Get the current PKCE code verifier */
-	getCodeVerifier(): string | null {
-		return this.codeVerifier;
-	}
-
-	/** Restore PKCE state (e.g. after plugin reload during auth flow) */
-	setPkceState(codeVerifier: string, authState: string): void {
-		this.codeVerifier = codeVerifier;
+	/** Restore auth state (e.g. after plugin reload during auth flow) */
+	setAuthState(authState: string): void {
 		this.authState = authState;
 	}
 
 	/**
-	 * Exchange an authorization code for tokens via Google's token endpoint.
-	 * Sends the PKCE code_verifier and client_secret alongside the code.
+	 * Accept tokens returned by the auth server callback.
+	 * The auth server already exchanged the authorization code for tokens;
+	 * we just verify the CSRF state and store the tokens.
 	 */
-	async exchangeCode(code: string, state?: string): Promise<TokenResponse> {
+	handleAuthCallback(params: {
+		access_token: string;
+		refresh_token?: string;
+		expires_in: string;
+		state?: string;
+	}): void {
 		// Verify CSRF state
 		if (!this.authState) {
 			throw new Error("OAuth state is missing. Please restart the authorization flow.");
 		}
-		if (!state || state !== this.authState) {
+		if (!params.state || params.state !== this.authState) {
 			throw new Error("State mismatch - possible CSRF attack");
 		}
-
-		if (!code?.trim()) {
-			throw new Error("Authorization code is empty");
-		}
-		if (!this.codeVerifier?.trim()) {
-			throw new Error("PKCE code verifier is missing. Please restart the authorization flow.");
+		if (!params.access_token) {
+			throw new Error("Access token is missing from auth callback");
 		}
 
-		const params = new URLSearchParams({
-			grant_type: "authorization_code",
-			code,
-			redirect_uri: REDIRECT_URI,
-			client_id: GOOGLE_CLIENT_ID,
-			client_secret: GOOGLE_CLIENT_SECRET,
-			code_verifier: this.codeVerifier,
-		});
-
-		const response = await requestUrl({
-			url: GOOGLE_TOKEN_URL,
-			method: "POST",
-			headers: { "Content-Type": "application/x-www-form-urlencoded" },
-			body: params.toString(),
-		});
-
-		const token: unknown = response.json;
-		assertTokenResponse(token);
-		this.accessToken = token.access_token;
-		this.accessTokenExpiry = Date.now() + token.expires_in * 1000;
-		if (token.refresh_token) {
-			this.refreshToken = token.refresh_token;
+		const expiresIn = parseInt(params.expires_in, 10);
+		if (isNaN(expiresIn) || expiresIn <= 0) {
+			throw new Error("Invalid expires_in from auth callback");
 		}
 
-		// Clear PKCE state after use
-		this.codeVerifier = null;
+		this.accessToken = params.access_token;
+		this.accessTokenExpiry = Date.now() + expiresIn * 1000;
+		if (params.refresh_token) {
+			this.refreshToken = params.refresh_token;
+		}
+
+		// Clear auth state after use
 		this.authState = null;
-
-		return token;
 	}
 
 	/**
@@ -161,21 +133,15 @@ export class GoogleAuth {
 		}
 	}
 
-	/** Perform the actual token refresh (called at most once per expiry cycle) */
+	/** Perform the actual token refresh via the auth server */
 	private async _refreshToken(): Promise<string> {
 		this.logger?.info("Refreshing access token");
-		const params = new URLSearchParams({
-			grant_type: "refresh_token",
-			refresh_token: this.refreshToken,
-			client_id: GOOGLE_CLIENT_ID,
-			client_secret: GOOGLE_CLIENT_SECRET,
-		});
 
 		const response = await requestUrl({
-			url: GOOGLE_TOKEN_URL,
+			url: `${AUTH_SERVER_URL}/token/refresh`,
 			method: "POST",
-			headers: { "Content-Type": "application/x-www-form-urlencoded" },
-			body: params.toString(),
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ refresh_token: this.refreshToken }),
 		});
 
 		const token: unknown = response.json;
@@ -216,42 +182,20 @@ export class GoogleAuth {
 	}
 }
 
-/** RFC 7636 unreserved characters: [A-Za-z0-9-._~] (66 chars) */
-const PKCE_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+const RANDOM_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-/** Generate a cryptographically random string of the given length using RFC 7636 charset */
+/** Generate a cryptographically random string of the given length */
 function generateRandomString(length: number): string {
-	// Rejection sampling to avoid modulo bias (256 % 66 = 58)
-	const limit = 256 - (256 % PKCE_CHARSET.length);
+	const limit = 256 - (256 % RANDOM_CHARSET.length);
 	const result: string[] = [];
 	while (result.length < length) {
 		const array = new Uint8Array(length - result.length);
 		crypto.getRandomValues(array);
 		for (const b of array) {
 			if (b < limit && result.length < length) {
-				result.push(PKCE_CHARSET[b % PKCE_CHARSET.length]!);
+				result.push(RANDOM_CHARSET[b % RANDOM_CHARSET.length]!);
 			}
 		}
 	}
 	return result.join("");
-}
-
-/** Compute S256 PKCE code challenge: BASE64URL(SHA256(code_verifier)) */
-async function computeS256Challenge(verifier: string): Promise<string> {
-	const encoder = new TextEncoder();
-	const data = encoder.encode(verifier);
-	const hash = await crypto.subtle.digest("SHA-256", data);
-	return base64urlEncode(new Uint8Array(hash));
-}
-
-/** Base64url encode a Uint8Array (no padding, per RFC 7636) */
-function base64urlEncode(bytes: Uint8Array): string {
-	let binary = "";
-	for (let i = 0; i < bytes.length; i++) {
-		binary += String.fromCharCode(bytes[i]!);
-	}
-	return btoa(binary)
-		.replace(/\+/g, "-")
-		.replace(/\//g, "_")
-		.replace(/=+$/, "");
 }
