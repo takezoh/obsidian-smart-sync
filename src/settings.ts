@@ -9,12 +9,12 @@ export interface SmartSyncSettings {
 	autoSyncIntervalMinutes: number;
 	/** Strategy for conflict resolution */
 	conflictStrategy: ConflictStrategy;
-	/** Glob patterns to exclude from sync */
-	excludePatterns: string[];
+	/** Gitignore-style patterns to exclude from sync */
+	ignorePatterns: string[];
 	/** Enable 3-way merge for text files */
 	enableThreeWayMerge: boolean;
-	/** Glob patterns for files to include on mobile */
-	mobileIncludePatterns: string[];
+	/** Gitignore-style patterns to exclude on mobile (overrides ignorePatterns) */
+	mobileIgnorePatterns: string[];
 	/** Maximum file size in MB to sync on mobile */
 	mobileMaxFileSizeMB: number;
 
@@ -32,9 +32,15 @@ export const DEFAULT_SETTINGS: SmartSyncSettings = {
 	backendType: "googledrive",
 	autoSyncIntervalMinutes: 5,
 	conflictStrategy: "keep_newer",
-	excludePatterns: [],
+	ignorePatterns: [],
 	enableThreeWayMerge: false,
-	mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
+	mobileIgnorePatterns: [
+		"# Sync only markdown and canvas on mobile",
+		"*",
+		"!*/",
+		"!**/*.md",
+		"!**/*.canvas",
+	],
 	mobileMaxFileSizeMB: 10,
 	enableLogging: false,
 	logLevel: "info",

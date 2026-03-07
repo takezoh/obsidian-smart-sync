@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import { matchGlob } from "../utils/glob";
 import "fake-indexeddb/auto";
 import type { SmartSyncSettings } from "../settings";
 import { SyncService, SyncServiceDeps, getErrorInfo, isRateLimitError } from "./service";
@@ -9,11 +8,16 @@ function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSett
 	return {
 		vaultId: `test-${Math.random()}`,
 		backendType: "none",
-		excludePatterns: [],
+		ignorePatterns: [],
 		conflictStrategy: "keep_newer",
 		enableThreeWayMerge: false,
 		autoSyncIntervalMinutes: 0,
-		mobileIncludePatterns: ["**/*.md", "**/*.canvas"],
+		mobileIgnorePatterns: [
+			"*",
+			"!*/",
+			"!**/*.md",
+			"!**/*.canvas",
+		],
 		mobileMaxFileSizeMB: 10,
 		enableLogging: false,
 		logLevel: "info",
@@ -67,17 +71,29 @@ describe("SyncService", () => {
 		await service.close();
 	});
 
-	it("isExcluded respects exclude patterns", () => {
+	it("isExcluded respects ignore patterns", () => {
 		const configDir = ".obsidian"; // eslint-disable-line obsidianmd/hardcoded-config-path
 		const deps = createMockDeps({
 			getSettings: () => mockSettings({
-				excludePatterns: [`${configDir}/**`, "*.tmp"],
+				ignorePatterns: [`${configDir}/**`, "*.tmp"],
 			}),
 		});
 		const service = new SyncService(deps);
 
 		expect(service.isExcluded(`${configDir}/plugins/test`)).toBe(true);
 		expect(service.isExcluded("notes/hello.md")).toBe(false);
+	});
+
+	it("isExcluded supports negation patterns", () => {
+		const deps = createMockDeps({
+			getSettings: () => mockSettings({
+				ignorePatterns: ["secret/**", "!secret/public/", "!secret/public/**"],
+			}),
+		});
+		const service = new SyncService(deps);
+
+		expect(service.isExcluded("secret/key.pem")).toBe(true);
+		expect(service.isExcluded("secret/public/readme.md")).toBe(false);
 	});
 });
 
@@ -155,18 +171,19 @@ describe("SyncService — mobile filtering", () => {
 		expect(service.isExcluded("data/file.pdf")).toBe(false);
 	});
 
-	it("excludePatterns still applies on mobile alongside include patterns", () => {
+	it("mobile uses mobileIgnorePatterns instead of ignorePatterns", () => {
 		const deps = createMockDeps({
 			isMobile: () => true,
 			getSettings: () => mockSettings({
-				excludePatterns: [".trash/**"],
-				mobileIncludePatterns: ["**/*.md"],
+				ignorePatterns: ["*.tmp"],
+				mobileIgnorePatterns: [".trash/**"],
 			}),
 		});
 		const service = new SyncService(deps);
 
-		// Excluded by excludePatterns even though it matches include
+		// mobileIgnorePatterns applied, not ignorePatterns
 		expect(service.isExcluded(".trash/note.md")).toBe(true);
+		expect(service.isExcluded("file.tmp")).toBe(false);
 	});
 
 	it("skips large files on mobile during sync", async () => {
@@ -335,67 +352,6 @@ describe("getErrorInfo (M2)", () => {
 	});
 });
 
-describe("matchGlob", () => {
-	it("matches exact path", () => {
-		expect(matchGlob("foo.md", "foo.md")).toBe(true);
-		expect(matchGlob("foo.md", "bar.md")).toBe(false);
-	});
-
-	it("matches single wildcard *", () => {
-		expect(matchGlob("*.md", "notes.md")).toBe(true);
-		expect(matchGlob("*.md", "notes.txt")).toBe(false);
-		expect(matchGlob("*.md", "dir/notes.md")).toBe(false);
-	});
-
-	it("matches globstar **", () => {
-		expect(matchGlob("**/*.md", "notes.md")).toBe(true);
-		expect(matchGlob("**/*.md", "dir/notes.md")).toBe(true);
-		expect(matchGlob("**/*.md", "a/b/c/notes.md")).toBe(true);
-		expect(matchGlob("**/*.md", "notes.txt")).toBe(false);
-	});
-
-	it("matches directory globstar prefix", () => {
-		const configDir = ".obsidian"; // eslint-disable-line obsidianmd/hardcoded-config-path
-		expect(matchGlob(`${configDir}/**`, `${configDir}/plugins/test`)).toBe(true);
-		expect(matchGlob(`${configDir}/**`, `${configDir}/config`)).toBe(true);
-		expect(matchGlob(`${configDir}/**`, `notes/${configDir}/config`)).toBe(false);
-	});
-
-	it("matches .trash/**", () => {
-		expect(matchGlob(".trash/**", ".trash/deleted.md")).toBe(true);
-		expect(matchGlob(".trash/**", ".trash/sub/deleted.md")).toBe(true);
-		expect(matchGlob(".trash/**", "notes.md")).toBe(false);
-	});
-
-	it("handles ? wildcard as single character", () => {
-		expect(matchGlob("file?.md", "file1.md")).toBe(true);
-		expect(matchGlob("file?.md", "fileA.md")).toBe(true);
-		expect(matchGlob("file?.md", "file.md")).toBe(false);
-		expect(matchGlob("file?.md", "file12.md")).toBe(false);
-		// ? should not match /
-		expect(matchGlob("file?.md", "file/.md")).toBe(false);
-	});
-
-	it("escapes regex special characters in patterns", () => {
-		expect(matchGlob("notes (1).md", "notes (1).md")).toBe(true);
-		expect(matchGlob("notes (1).md", "notes X1Y.md")).toBe(false);
-		expect(matchGlob("file.test.md", "file.test.md")).toBe(true);
-		expect(matchGlob("file.test.md", "fileXtest.md")).toBe(false);
-	});
-
-	it("does not match substring", () => {
-		expect(matchGlob("foo", "foobar")).toBe(false);
-		expect(matchGlob("foo", "barfoo")).toBe(false);
-	});
-
-	it("caches regex for repeated calls with same pattern", () => {
-		// Call multiple times — should not throw and should return consistent results
-		for (let i = 0; i < 100; i++) {
-			expect(matchGlob("**/*.md", `dir${i}/file.md`)).toBe(true);
-			expect(matchGlob("**/*.md", `dir${i}/file.txt`)).toBe(false);
-		}
-	});
-});
 
 describe("isRateLimitError", () => {
 	it("returns true for 403 with rateLimitExceeded reason", () => {

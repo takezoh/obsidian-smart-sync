@@ -54,7 +54,7 @@ src/
 │   └── async-queue.ts              # AsyncMutex + AsyncPool — concurrency primitives
 ├── utils/
 │   ├── hash.ts                     # sha256() — Web Crypto API
-│   ├── glob.ts                     # matchGlob() — glob pattern matching (regex conversion + cache)
+│   ├── ignore.ts                    # isIgnored() — gitignore-style pattern matching (via `ignore` package)
 │   └── path.ts                     # Path utilities
 ├── ui/
 │   ├── settings.ts                 # SmartSyncSettingTab — settings tab UI
@@ -668,29 +668,22 @@ Shows progress text during sync (e.g., "Syncing 3/15...").
 
 ---
 
-## Exclude patterns
+## Ignore patterns
 
-Glob matching via `matchGlob()`. Pattern syntax:
+Gitignore-compatible pattern matching via the `ignore` npm package (~8 KB, browser/mobile safe). Supports negation (`!`), comments (`#`), trailing slash (directory-only), and last-match-wins semantics.
 
-| Pattern | Meaning |
-|---------|---------|
-| `*` | Any characters except slash |
-| `?` | Any single character except slash |
-| `**` | Any depth of path |
-| `**/` | Prefix chain |
+Two separate pattern lists:
 
-`excludePatterns` defaults to an empty array. Users add patterns (e.g., `*.zip`, `large-assets/**`) via the settings UI. Dot-prefixed files and directories (`.obsidian/`, `.trash/`, etc.) are already excluded by Obsidian's Vault API — `getAllLoadedFiles()` does not index them, so they never appear in `LocalFs.list()` and do not need exclude patterns.
+- **`ignorePatterns`** — applied on desktop. Default: `[]` (nothing ignored).
+- **`mobileIgnorePatterns`** — applied on mobile **instead of** `ignorePatterns`. Default: `["*", "!**/*.md", "!**/*.canvas"]` (sync only markdown and canvas). Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings.
 
-Compiled regexes are cached in `globCache` to avoid recompilation.
+`isExcluded()` in `SyncService` selects the appropriate list based on `SyncServiceDeps.isMobile`.
 
-### Mobile sync filtering
+Dot-prefixed files and directories (`.obsidian/`, `.trash/`, etc.) are already excluded by Obsidian's Vault API — `getAllLoadedFiles()` does not index them, so they never appear in `LocalFs.list()` and do not need ignore patterns.
 
-On mobile devices (`Platform.isMobile`), two additional filters restrict which files are synced:
+### Mobile max file size
 
-1. **Include patterns** (`mobileIncludePatterns`): Only files matching at least one pattern are synced. Default: `["**/*.md", "**/*.canvas"]`. Checked in `isExcluded()` — files not matching any include pattern are excluded. Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings. Users who need attachments on mobile should add the relevant patterns (e.g., `**/*.png`, `**/*.pdf`).
-2. **Max file size** (`mobileMaxFileSizeMB`): Files exceeding this size (default: 10 MB) are skipped. Checked in `executeSyncOnce()` using `Math.max(e.local?.size ?? 0, e.remote?.size ?? 0)` — when one side is missing (e.g., `local_created_push`), the missing side defaults to 0.
-
-These filters are applied **after** `excludePatterns` — a file excluded by `excludePatterns` is always excluded regardless of mobile include patterns. Both settings are configurable from the settings UI on any device (desktop or mobile).
+`mobileMaxFileSizeMB` (default: 10 MB) is checked separately in `executeSyncOnce()` using `Math.max(e.local?.size ?? 0, e.remote?.size ?? 0)`.
 
 `SyncServiceDeps.isMobile` is injected as `() => Platform.isMobile` for testability.
 

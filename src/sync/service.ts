@@ -3,7 +3,7 @@ import type { IFileSystem } from "../fs/interface";
 import type { IBackendProvider } from "../fs/backend";
 import type { ConflictStrategy, MixedEntity, SyncDecision } from "./types";
 import { AsyncMutex } from "../queue/async-queue";
-import { matchGlob } from "../utils/glob";
+import { isIgnored } from "../utils/ignore";
 import { sha256 } from "../utils/hash";
 import { SyncStateStore } from "./state";
 import { buildMixedEntities, computeDecisions } from "./engine";
@@ -73,17 +73,10 @@ export class SyncService {
 
 	isExcluded(path: string): boolean {
 		const settings = this.deps.getSettings();
-		for (const pattern of settings.excludePatterns) {
-			if (matchGlob(pattern, path)) return true;
-		}
-		// On mobile, only include files matching mobileIncludePatterns
-		if (this.deps.isMobile() && settings.mobileIncludePatterns.length > 0) {
-			const included = settings.mobileIncludePatterns.some((p) =>
-				matchGlob(p, path)
-			);
-			if (!included) return true;
-		}
-		return false;
+		const patterns = this.deps.isMobile()
+			? settings.mobileIgnorePatterns
+			: settings.ignorePatterns;
+		return isIgnored(path, patterns);
 	}
 
 	async runSync(): Promise<void> {

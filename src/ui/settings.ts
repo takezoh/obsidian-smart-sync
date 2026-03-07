@@ -93,21 +93,19 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Exclude patterns")
-			.setDesc(
-				`Glob patterns to exclude from sync, one per line.`
+			.setName("Ignore patterns")
+			.setDesc( // eslint-disable-next-line obsidianmd/ui/sentence-case
+				"Gitignore-style patterns, one per line. Use ! to negate, # for comments. Last matching rule wins."
 			)
 			.addTextArea((text) =>
 				text
-					.setPlaceholder(`secret/**\ndrafts/**`) // eslint-disable-line obsidianmd/ui/sentence-case
+					.setPlaceholder("# Ignore secrets\nsecret/**\n!secret/public/\n!secret/public/**") // eslint-disable-line obsidianmd/ui/sentence-case
 					.setValue(
-						this.plugin.settings.excludePatterns.join("\n")
+						this.plugin.settings.ignorePatterns.join("\n")
 					)
 					.onChange(async (value) => {
-						this.plugin.settings.excludePatterns = value
-							.split("\n")
-							.map((s) => s.trim())
-							.filter((s) => s.length > 0);
+						this.plugin.settings.ignorePatterns =
+							value.split("\n");
 						await this.plugin.saveSettings();
 					})
 			);
@@ -116,21 +114,19 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Mobile sync").setHeading();
 
 		new Setting(containerEl)
-			.setName("Mobile include patterns")
+			.setName("Mobile ignore patterns")
 			.setDesc(
-				"Glob patterns for files to sync on mobile, one per line. Only matching files will be synced. By default, images and other attachments are excluded to save bandwidth."
+				"Gitignore-style patterns applied on mobile instead of the desktop ignore patterns. By default, only .md and .canvas files are synced."
 			)
 			.addTextArea((text) =>
 				text
-					.setPlaceholder("**/*.md\n**/*.canvas")
+					.setPlaceholder("*\n!**/*.md\n!**/*.canvas")
 					.setValue(
-						this.plugin.settings.mobileIncludePatterns.join("\n")
+						this.plugin.settings.mobileIgnorePatterns.join("\n")
 					)
 					.onChange(async (value) => {
-						this.plugin.settings.mobileIncludePatterns = value
-							.split("\n")
-							.map((s) => s.trim())
-							.filter((s) => s.length > 0);
+						this.plugin.settings.mobileIgnorePatterns =
+							value.split("\n");
 						await this.plugin.saveSettings();
 					})
 			);
