@@ -35,11 +35,12 @@ export const DEFAULT_SETTINGS: SmartSyncSettings = {
 	ignorePatterns: [],
 	enableThreeWayMerge: false,
 	mobileIgnorePatterns: [
-		"# Sync only markdown and canvas on mobile",
+		"# Sync only markdown, canvas, and bases on mobile",
 		"*",
 		"!*/",
 		"!**/*.md",
 		"!**/*.canvas",
+		"!**/*.base",
 	],
 	mobileMaxFileSizeMB: 10,
 	enableLogging: false,

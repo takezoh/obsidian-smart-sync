@@ -724,7 +724,7 @@ Gitignore-compatible pattern matching via the `ignore` npm package (~8 KB, brows
 Two separate pattern lists:
 
 - **`ignorePatterns`** — applied on desktop. Default: `[]` (nothing ignored).
-- **`mobileIgnorePatterns`** — applied on mobile **instead of** `ignorePatterns`. Default: `["*", "!**/*.md", "!**/*.canvas"]` (sync only markdown and canvas). Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings.
+- **`mobileIgnorePatterns`** — applied on mobile **instead of** `ignorePatterns`. Default: `["*", "!**/*.md", "!**/*.canvas", "!**/*.base"]` (sync only markdown, canvas, and bases). Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings.
 
 `isExcluded()` in `SyncService` selects the appropriate list based on `SyncServiceDeps.isMobile`.
 

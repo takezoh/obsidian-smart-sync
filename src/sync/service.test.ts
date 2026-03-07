@@ -17,6 +17,7 @@ function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSett
 			"!*/",
 			"!**/*.md",
 			"!**/*.canvas",
+			"!**/*.base",
 		],
 		mobileMaxFileSizeMB: 10,
 		enableLogging: false,
@@ -147,6 +148,7 @@ describe("SyncService — mobile filtering", () => {
 
 		expect(service.isExcluded("notes/hello.md")).toBe(false);
 		expect(service.isExcluded("folder/diagram.canvas")).toBe(false);
+		expect(service.isExcluded("folder/view.base")).toBe(false);
 	});
 
 	it("isExcluded blocks non-matching files on mobile", () => {
