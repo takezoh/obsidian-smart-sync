@@ -311,6 +311,34 @@ describe("SyncExecutor", () => {
 		expect(result.conflicts).toBe(1);
 	});
 
+	it("conflict: populates conflictRecords in SyncResult", async () => {
+		const localFile = makeFile("conflict.md", "local v", 2000);
+		localFs.files.set("conflict.md", localFile);
+		const remoteFile = makeFile("conflict.md", "remote v", 3000);
+		remoteFs.files.set("conflict.md", remoteFile);
+
+		const decisions: SyncDecision[] = [
+			{
+				path: "conflict.md",
+				decision: "conflict_both_modified",
+				local: localFile.entity,
+				remote: remoteFile.entity,
+			},
+		];
+
+		const executor = createExecutor();
+		const result = await executor.execute(decisions);
+
+		expect(result.conflictRecords).toHaveLength(1);
+		const rec = result.conflictRecords[0]!;
+		expect(rec.path).toBe("conflict.md");
+		expect(rec.decisionType).toBe("conflict_both_modified");
+		expect(rec.strategy).toBe("keep_newer");
+		expect(rec.action).toBe("kept_remote");
+		expect(rec.resolvedAt).toBeTruthy();
+		expect(rec.sessionId).toBe("");
+	});
+
 	it("conflict: keep_newer resolves to newer side", async () => {
 		const localFile = makeFile("conflict.md", "local old", 1000);
 		localFs.files.set("conflict.md", localFile);

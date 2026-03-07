@@ -1,4 +1,4 @@
-import type { ConflictStrategy, SyncDecision, SyncRecord } from "./types";
+import type { ConflictRecord, ConflictStrategy, SyncDecision, SyncRecord } from "./types";
 import type { IFileSystem } from "../fs/interface";
 import type { SyncStateStore } from "./state";
 import type { Logger } from "../logging/logger";
@@ -23,6 +23,7 @@ export interface SyncResult {
 	conflicts: number;
 	/** Paths where 3-way merge left unresolved conflict markers */
 	mergeConflictPaths: string[];
+	conflictRecords: ConflictRecord[];
 	errors: string[];
 }
 
@@ -85,6 +86,7 @@ export class SyncExecutor implements ExecutorContext {
 			pulled: 0,
 			conflicts: 0,
 			mergeConflictPaths: [],
+			conflictRecords: [],
 			errors: [],
 		};
 

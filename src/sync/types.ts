@@ -60,3 +60,17 @@ export interface SyncDecision {
 	remote?: FileEntity;
 	prevSync?: SyncRecord;
 }
+
+/** A record of a conflict resolution for audit/history purposes */
+export interface ConflictRecord {
+	path: string;
+	decisionType: DecisionType;
+	strategy: ConflictStrategy;
+	action: "kept_local" | "kept_remote" | "duplicated" | "merged";
+	local?: FileEntity;
+	remote?: FileEntity;
+	duplicatePath?: string;
+	hasConflictMarkers?: boolean;
+	resolvedAt: string;
+	sessionId: string;
+}

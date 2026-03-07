@@ -1,6 +1,6 @@
 import type { IFileSystem } from "../fs/interface";
 import type { FileEntity } from "../fs/types";
-import type { ConflictStrategy, SyncDecision, SyncRecord } from "./types";
+import type { ConflictRecord, ConflictStrategy, SyncDecision, SyncRecord } from "./types";
 import type { SyncStateStore } from "./state";
 import type { Logger } from "../logging/logger";
 import type { OnConflict, SyncResult } from "./executor";
@@ -128,6 +128,21 @@ export async function executeConflict(
 	};
 
 	const resolution = await resolveConflict(conflictCtx, strategy, getFallback);
+
+	// Record conflict metadata for history
+	const conflictRecord: ConflictRecord = {
+		path,
+		decisionType: decision.decision,
+		strategy,
+		action: resolution.action,
+		local: decision.local,
+		remote: decision.remote,
+		duplicatePath: resolution.duplicatePath,
+		hasConflictMarkers: resolution.hasConflictMarkers,
+		resolvedAt: new Date().toISOString(),
+		sessionId: "",
+	};
+	result.conflictRecords.push(conflictRecord);
 
 	// Track paths with unresolved merge conflicts
 	if (resolution.hasConflictMarkers) {
