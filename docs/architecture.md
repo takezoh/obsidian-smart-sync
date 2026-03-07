@@ -32,10 +32,12 @@ src/
 │   │   ├── types.ts                # Drive API response types, validation functions + DriveFileRecord alias
 │   │   ├── metadata-cache.ts       # DriveMetadataCache — in-memory path↔ID, folder, children index
 │   │   ├── incremental-sync.ts     # applyIncrementalChanges() — changes.list delta sync
+│   │   ├── remote-vault.ts         # resolveGDriveRemoteVault() — Drive-specific remote vault resolution
 │   │   └── resumable-upload.ts     # ResumableUploader — resumable upload (>5 MB) with resume-on-retry
 │   └── mock/
 │       └── index.ts                # MockFs — in-memory IFileSystem for testing
 ├── sync/
+│   ├── remote-vault.ts             # RemoteVaultStore (IndexedDB), shared types & constants
 │   ├── types.ts                   # SyncRecord, MixedEntity, DecisionType, ConflictStrategy, SyncDecision
 │   ├── engine.ts                   # buildMixedEntities() + computeDecisions() — 3-state decision table
 │   ├── executor.ts                 # SyncExecutor — executes IFileSystem operations based on decisions
@@ -79,6 +81,7 @@ src/
 ├─────────────────────────────────────────────────────┤
 │  fs/backend-manager.ts (BackendManager)             │
 │  - Backend initialization & connection flow         │
+│  - Remote vault resolution (before FS creation)     │
 │  - Auth lifecycle (start, complete, disconnect)     │
 │  - Manages IBackendProvider + IFileSystem instances  │
 ├─────────────────────────────────────────────────────┤
@@ -269,11 +272,16 @@ interface IBackendProvider {
   createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
   isConnected(settings: SmartSyncSettings): boolean;
   readBackendState?(fs: IFileSystem): Record<string, unknown>;
+  resolveRemoteVault?(app: App, settings: SmartSyncSettings, vaultName: string, cachedRemoteVaultId: string | undefined, logger?: Logger): Promise<RemoteVaultResolution>;
   disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>>;
 }
 ```
 
-`readBackendState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens). `SyncService` checks existence before calling (`provider?.readBackendState && ...`). The returned opaque record is stored in `settings.backendData[provider.type]` — the sync layer never inspects its contents. `disconnect()` revokes auth and resets all backend state, returning the reset data to persist.
+`readBackendState` is optional because not all backends need to persist internal state (e.g., cursors, page tokens). `SyncService` checks existence before calling (`provider?.readBackendState && ...`). The returned opaque record is stored in `settings.backendData[provider.type]` — the sync layer never inspects its contents.
+
+`resolveRemoteVault` is optional. When implemented, `BackendManager` calls it after auth and before `createFs()` to discover or create a remote vault folder. The result provides `remoteVaultId` (persisted in IndexedDB) and `backendUpdates` (merged into `settings.backendData`). Resolution is skipped when the cached ID exists and vault name hasn't changed.
+
+`disconnect()` revokes auth and resets all backend state, returning the reset data to persist.
 
 ## IBackendSettingsRenderer interface (`ui/backend-settings.ts`)
 
@@ -464,15 +472,16 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 
 - `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(data)` to obtain a `GoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
 - `readBackendState()`: Read `changesStartPageToken` + refreshed tokens from `GoogleDriveFs` and return as opaque record
-- `disconnect()`: Revoke auth tokens and return reset backend data (preserves `driveFolderId`)
+- `resolveRemoteVault()`: Discover or create the remote vault folder in Google Drive (`obsidian-smart-sync/{uuid}/`)
+- `disconnect()`: Revoke auth tokens and return reset backend data
 
 All Google Drive-specific data is stored in `settings.backendData["googledrive"]` as `GoogleDriveBackendData` (defined in `provider.ts`). The sync layer never accesses these fields directly.
 
 ### GoogleDriveSettingsRenderer (`ui/googledrive-settings.ts`)
 
-`IBackendSettingsRenderer` implementation. Renders Google Drive-specific settings: folder ID input, connection status indicator, and auth code flow.
+`IBackendSettingsRenderer` implementation. Renders Google Drive-specific settings: connection status indicator and auth code flow. The remote vault folder is automatically managed — no manual folder ID input required.
 
-Connection state is derived from `settings.backendData["googledrive"]` (`!!refreshToken`, `!!driveFolderId`) — no dependency on the provider instance. Button text and auth code input visibility are driven by `isAuthenticated` (token present) rather than `isConnected` (token + folder ID), so the UI correctly reflects the authenticated state before folder ID is configured. Folder ID changes trigger `refreshDisplay()` after save to keep the status indicator in sync.
+Connection state is derived from `settings.backendData["googledrive"]` (`!!refreshToken`) — no dependency on the provider instance. When connected, the remote vault folder ID is shown as read-only.
 
 ### GoogleDriveAuthProvider (`fs/googledrive/provider.ts`)
 
@@ -541,6 +550,36 @@ IndexedDB-based. Database name is `smart-sync-{vaultId}` (independent per vault)
 Both `SyncStateStore` and `MetadataStore<T>` delegate IndexedDB lifecycle (open/close idempotency, `onversionchange` recovery, transaction wrapping) to `IDBHelper` (`store/idb-helper.ts`) via composition. Each store passes its schema-specific `onUpgrade` callback and uses `helper.runTransaction()` for all reads and writes. `MetadataStore<T>` is backend-agnostic — Google Drive instantiates it as `MetadataStore<DriveFile>`, and future backends (Dropbox, S3, etc.) can reuse the same store with their own file metadata type.
 
 DB version 3. The v2→v3 upgrade (`size` → `localSize`/`remoteSize` in `SyncRecord`) is a breaking schema change — `onupgradeneeded` drops and recreates all object stores, clearing existing sync state.
+
+---
+
+## Remote vault (`sync/remote-vault.ts`)
+
+Each Obsidian vault maps to a dedicated folder in the backend storage, organized under a common root: `obsidian-smart-sync/{remoteVaultId}/`. The `remoteVaultId` is a UUID assigned on first connection and never changes.
+
+### RemoteVaultStore
+
+IndexedDB store (`smart-sync-rv-{vaultId}`) that persists `remoteVaultId` and `lastKnownVaultName`. Used by `BackendManager` to cache the link between a local vault and its remote folder, avoiding redundant resolution on every startup.
+
+### Resolution flow (BackendManager.initBackend)
+
+1. If `resolveRemoteVault` is not implemented by the provider, skip (backwards compatible)
+2. Load `cachedRemoteVaultId` and `lastKnownVaultName` from `RemoteVaultStore`
+3. If cached ID exists and vault name hasn't changed → skip (no network call)
+4. Otherwise call `provider.resolveRemoteVault()` → persist `backendUpdates` in settings and save `remoteVaultId` + `vaultName` in IndexedDB
+
+### Metadata
+
+Each remote vault contains `.smartsync/metadata.json` with `{ vaultName }`. This is used by new devices to find a matching remote vault by `app.vault.getName()`. Already-linked devices use the cached `remoteVaultId` and only update `metadata.json` when the local vault name changes.
+
+### Google Drive implementation (`fs/googledrive/remote-vault.ts`)
+
+`resolveGDriveRemoteVault()` handles Drive-specific resolution:
+
+- **Cached path** (linked device): Find `obsidian-smart-sync/{cachedId}` folder → verify it exists → update `metadata.json` if vault name changed
+- **Uncached path** (new device): List all folders under `obsidian-smart-sync/` → read each `metadata.json` → match by `vaultName` → link if found, otherwise create new UUID folder with `.smartsync/metadata.json`
+
+Uses `DriveClient.findChildByName()` for efficient single-folder lookups instead of full recursive scans.
 
 ---
 

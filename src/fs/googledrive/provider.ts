@@ -6,15 +6,17 @@ import type { IAuthProvider } from "../auth";
 import type { IFileSystem } from "../interface";
 import type { SmartSyncSettings } from "../../settings";
 import type { Logger } from "../../logging/logger";
+import type { RemoteVaultResolution } from "../../sync/remote-vault";
 import { GoogleAuth } from "./auth";
 import { DriveClient } from "./client";
 import { GoogleDriveFs } from "./index";
 import { MetadataStore } from "../../store/metadata-store";
+import { resolveGDriveRemoteVault } from "./remote-vault";
 import type { DriveFile } from "./types";
 
 /** All data stored in backendData["googledrive"] */
 export interface GoogleDriveBackendData {
-	driveFolderId: string;
+	remoteVaultFolderId: string;
 	refreshToken: string;
 	accessToken: string;
 	accessTokenExpiry: number;
@@ -24,7 +26,7 @@ export interface GoogleDriveBackendData {
 }
 
 const DEFAULT_GDRIVE_DATA: GoogleDriveBackendData = {
-	driveFolderId: "",
+	remoteVaultFolderId: "",
 	refreshToken: "",
 	accessToken: "",
 	accessTokenExpiry: 0,
@@ -152,7 +154,7 @@ export class GoogleDriveProvider implements IBackendProvider {
 
 	createFs(_app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null {
 		const data = getGDriveData(settings);
-		if (!data.refreshToken || !data.driveFolderId) return null;
+		if (!data.refreshToken || !data.remoteVaultFolderId) return null;
 
 		const googleAuth = this.auth.getOrCreateGoogleAuth(data, logger);
 		googleAuth.setTokens(
@@ -161,11 +163,11 @@ export class GoogleDriveProvider implements IBackendProvider {
 			data.accessTokenExpiry
 		);
 		const client = new DriveClient(googleAuth, logger);
-		const metadataStore = new MetadataStore<DriveFile>(_app.vault.getName(), {
+		const metadataStore = new MetadataStore<DriveFile>(data.remoteVaultFolderId, {
 			dbNamePrefix: "smart-sync-drive",
 			version: 1,
 		});
-		const fs = new GoogleDriveFs(client, data.driveFolderId, logger, metadataStore);
+		const fs = new GoogleDriveFs(client, data.remoteVaultFolderId, logger, metadataStore);
 
 		// Restore the changes page token for incremental sync
 		if (data.changesStartPageToken) {
@@ -177,7 +179,7 @@ export class GoogleDriveProvider implements IBackendProvider {
 
 	isConnected(settings: SmartSyncSettings): boolean {
 		const data = getGDriveData(settings);
-		return !!data.refreshToken && !!data.driveFolderId;
+		return !!data.refreshToken;
 	}
 
 	readBackendState(fs: IFileSystem): Record<string, unknown> {
@@ -198,14 +200,23 @@ export class GoogleDriveProvider implements IBackendProvider {
 		return result;
 	}
 
-	async disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>> {
-		await this.auth.revokeAuth();
+	async resolveRemoteVault(
+		_app: App,
+		settings: SmartSyncSettings,
+		vaultName: string,
+		cachedRemoteVaultId: string | undefined,
+		logger?: Logger,
+	): Promise<RemoteVaultResolution> {
 		const data = getGDriveData(settings);
-		// Preserve driveFolderId so user doesn't have to re-enter it
-		return {
-			...DEFAULT_GDRIVE_DATA,
-			driveFolderId: data.driveFolderId,
-		};
+		const googleAuth = this.auth.getOrCreateGoogleAuth(data, logger);
+		googleAuth.setTokens(data.refreshToken, data.accessToken, data.accessTokenExpiry);
+		const client = new DriveClient(googleAuth, logger);
+		return resolveGDriveRemoteVault(client, vaultName, cachedRemoteVaultId, logger);
+	}
+
+	async disconnect(_settings: SmartSyncSettings): Promise<Record<string, unknown>> {
+		await this.auth.revokeAuth();
+		return { ...DEFAULT_GDRIVE_DATA };
 	}
 }
 

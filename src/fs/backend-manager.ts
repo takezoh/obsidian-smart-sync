@@ -4,12 +4,14 @@ import type { IFileSystem } from "./interface";
 import type { IBackendProvider } from "./backend";
 import type { Logger } from "../logging/logger";
 import { getBackendProvider } from "./registry";
+import { RemoteVaultStore } from "../sync/remote-vault";
 
 export interface BackendManagerDeps {
 	getSettings: () => SmartSyncSettings;
 	saveSettings: () => Promise<void>;
 	getApp: () => App;
 	getLogger: () => Logger;
+	getVaultName: () => string;
 	onConnected: (remoteFs: IFileSystem) => void;
 	onDisconnected: () => void;
 	notify: (message: string) => void;
@@ -19,6 +21,7 @@ export interface BackendManagerDeps {
 export class BackendManager {
 	private remoteFs: IFileSystem | null = null;
 	private backendProvider: IBackendProvider | null = null;
+	private remoteVaultStore: RemoteVaultStore | null = null;
 
 	constructor(private deps: BackendManagerDeps) {}
 
@@ -31,7 +34,7 @@ export class BackendManager {
 	}
 
 	/** Resolve the backend provider and create the remote IFileSystem */
-	initBackend(): void {
+	async initBackend(): Promise<void> {
 		const settings = this.deps.getSettings();
 		const provider = getBackendProvider(settings.backendType);
 		if (!provider) return;
@@ -42,20 +45,47 @@ export class BackendManager {
 			this.remoteFs?.close?.()?.catch((e: unknown) => {
 				console.warn("Smart Sync: failed to close previous backend", e);
 			});
-			if (provider.isConnected(settings)) {
-				this.remoteFs = provider.createFs(this.deps.getApp(), settings, this.deps.getLogger());
-				if (this.remoteFs) {
-					this.deps.onConnected(this.remoteFs);
-					this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
-				}
-			} else {
+			if (!provider.isConnected(settings)) {
 				this.remoteFs = null;
 				this.deps.onDisconnected();
+				return;
+			}
+
+			// Remote vault resolution
+			if (provider.resolveRemoteVault) {
+				await this.resolveRemoteVault(provider, settings);
+			}
+
+			this.remoteFs = provider.createFs(this.deps.getApp(), settings, this.deps.getLogger());
+			if (this.remoteFs) {
+				this.deps.onConnected(this.remoteFs);
+				this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
 			}
 		} catch (e) {
 			console.error("Smart Sync: failed to initialize backend", e);
 			this.deps.getLogger().error("Failed to initialize backend", { message: e instanceof Error ? e.message : String(e) });
 		}
+	}
+
+	private async resolveRemoteVault(
+		provider: IBackendProvider,
+		settings: SmartSyncSettings,
+	): Promise<void> {
+		const vaultName = this.deps.getVaultName();
+		this.remoteVaultStore ??= new RemoteVaultStore(settings.vaultId);
+		const cachedId = await this.remoteVaultStore.getRemoteVaultId();
+		const lastKnownName = await this.remoteVaultStore.getLastKnownVaultName();
+
+		// Skip if already linked and name unchanged
+		if (cachedId && lastKnownName === vaultName) return;
+
+		const result = await provider.resolveRemoteVault!(
+			this.deps.getApp(), settings, vaultName, cachedId, this.deps.getLogger()
+		);
+		const type = provider.type;
+		settings.backendData[type] = { ...(settings.backendData[type] ?? {}), ...result.backendUpdates };
+		await this.deps.saveSettings();
+		await this.remoteVaultStore.save(result.remoteVaultId, vaultName);
 	}
 
 	/** Start the backend's auth/connection flow */
@@ -99,6 +129,11 @@ export class BackendManager {
 			settings.backendData[type] = { ...backendData, ...updates };
 			await this.deps.saveSettings();
 
+			// Resolve remote vault before creating FS
+			if (this.backendProvider.resolveRemoteVault) {
+				await this.resolveRemoteVault(this.backendProvider, settings);
+			}
+
 			this.remoteFs = this.backendProvider.createFs(
 				this.deps.getApp(),
 				settings,
@@ -139,6 +174,9 @@ export class BackendManager {
 	close(): void {
 		this.remoteFs?.close?.()?.catch((e: unknown) => {
 			console.warn("Smart Sync: failed to close backend on unload", e);
+		});
+		this.remoteVaultStore?.close().catch((e: unknown) => {
+			console.warn("Smart Sync: failed to close remote vault store", e);
 		});
 	}
 }
