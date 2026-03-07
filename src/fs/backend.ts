@@ -3,6 +3,7 @@ import type { IFileSystem } from "./interface";
 import type { IAuthProvider } from "./auth";
 import type { SmartSyncSettings } from "../settings";
 import type { Logger } from "../logging/logger";
+import type { RemoteVaultResolution } from "../sync/remote-vault";
 
 /**
  * Abstraction for a remote storage backend.
@@ -42,6 +43,18 @@ export interface IBackendProvider {
 	 * Returns an opaque record — the sync layer does not inspect its contents.
 	 */
 	readBackendState?(fs: IFileSystem): Record<string, unknown>;
+
+	/**
+	 * Discover or create the remote vault for the given vault name.
+	 * Called by BackendManager after auth, before createFs().
+	 * Returns backend-specific data to persist in settings.backendData.
+	 */
+	resolveRemoteVault?(
+		app: App,
+		settings: SmartSyncSettings,
+		vaultName: string,
+		logger?: Logger,
+	): Promise<RemoteVaultResolution>;
 
 	/**
 	 * Disconnect the backend: revoke auth and reset all backend state.

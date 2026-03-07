@@ -40,6 +40,7 @@ export default class SmartSyncPlugin extends Plugin {
 			saveSettings: () => this.saveSettings(),
 			getApp: () => this.app,
 			getLogger: () => this.logger,
+			getVaultName: () => this.app.vault.getName(),
 			onConnected: () => {
 				this.syncStatus = "idle";
 				this.updateStatusBar();

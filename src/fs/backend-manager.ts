@@ -10,6 +10,7 @@ export interface BackendManagerDeps {
 	saveSettings: () => Promise<void>;
 	getApp: () => App;
 	getLogger: () => Logger;
+	getVaultName: () => string;
 	onConnected: (remoteFs: IFileSystem) => void;
 	onDisconnected: () => void;
 	onIdentityChanged: () => Promise<void>;
@@ -55,20 +56,48 @@ export class BackendManager {
 			this.remoteFs?.close?.()?.catch((e: unknown) => {
 				console.warn("Smart Sync: failed to close previous backend", e);
 			});
-			if (provider.isConnected(settings)) {
-				this.remoteFs = provider.createFs(this.deps.getApp(), settings, this.deps.getLogger());
-				if (this.remoteFs) {
-					this.deps.onConnected(this.remoteFs);
-					this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
-				}
-			} else {
+			if (!provider.isConnected(settings)) {
 				this.remoteFs = null;
 				this.deps.onDisconnected();
+				return;
+			}
+
+			// Remote vault resolution
+			if (provider.resolveRemoteVault) {
+				await this.resolveRemoteVault(provider, settings);
+			}
+
+			this.remoteFs = provider.createFs(this.deps.getApp(), settings, this.deps.getLogger());
+			if (this.remoteFs) {
+				this.deps.onConnected(this.remoteFs);
+				this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
 			}
 		} catch (e) {
 			console.error("Smart Sync: failed to initialize backend", e);
 			this.deps.getLogger().error("Failed to initialize backend", { message: e instanceof Error ? e.message : String(e) });
 		}
+	}
+
+	private async resolveRemoteVault(
+		provider: IBackendProvider,
+		settings: SmartSyncSettings,
+	): Promise<void> {
+		const vaultName = this.deps.getVaultName();
+		const type = provider.type;
+		const backendData = settings.backendData[type] as Record<string, unknown> | undefined;
+		const cachedFolderId = backendData?.remoteVaultFolderId as string | undefined;
+		const lastKnownName = backendData?.lastKnownVaultName as string | undefined;
+
+		// Skip network call if already linked and name unchanged
+		if (cachedFolderId && lastKnownName === vaultName) {
+			return;
+		}
+
+		const result = await provider.resolveRemoteVault!(
+			this.deps.getApp(), settings, vaultName, this.deps.getLogger()
+		);
+		settings.backendData[type] = { ...(settings.backendData[type] ?? {}), ...result.backendUpdates };
+		await this.deps.saveSettings();
 	}
 
 	/** Start the backend's auth/connection flow */
@@ -111,6 +140,11 @@ export class BackendManager {
 			);
 			settings.backendData[type] = { ...backendData, ...updates };
 			await this.deps.saveSettings();
+
+			// Resolve remote vault before creating FS
+			if (this.backendProvider.resolveRemoteVault) {
+				await this.resolveRemoteVault(this.backendProvider, settings);
+			}
 
 			this.remoteFs = this.backendProvider.createFs(
 				this.deps.getApp(),

@@ -61,6 +61,46 @@ export class DriveClient {
 		}
 	}
 
+	/** Find a child file/folder by name under a parent */
+	async findChildByName(
+		parentId: string,
+		name: string,
+		mimeType?: string
+	): Promise<DriveFile | null> {
+		const token = await this.auth.getAccessToken();
+		const escapedParent = parentId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+		const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+		let q = `'${escapedParent}' in parents and name = '${escapedName}' and trashed = false`;
+		if (mimeType) {
+			q += ` and mimeType = '${mimeType}'`;
+		}
+		const params = new URLSearchParams({
+			q,
+			fields: `files(${FILE_FIELDS})`,
+			pageSize: "1",
+		});
+		const response = await this.request("findChildByName", {
+			url: `${DRIVE_API}/files?${params.toString()}`,
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const result: unknown = response.json;
+		assertDriveFileList(result);
+		return result.files[0] ?? null;
+	}
+
+	/** Get a file's metadata by ID */
+	async getFile(fileId: string): Promise<DriveFile> {
+		const token = await this.auth.getAccessToken();
+		const params = new URLSearchParams({ fields: FILE_FIELDS });
+		const response = await this.request("getFile", {
+			url: `${DRIVE_API}/files/${fileId}?${params.toString()}`,
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const result: unknown = response.json;
+		assertDriveFile(result);
+		return result;
+	}
+
 	/** List all files in a folder (paginated) */
 	async listFiles(
 		folderId: string,

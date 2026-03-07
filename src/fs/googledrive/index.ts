@@ -1,5 +1,6 @@
 import type { IFileSystem } from "../interface";
 import type { FileEntity } from "../types";
+import { FOLDER_MIME } from "./types";
 import type { DriveFile } from "./types";
 import type { DriveClient } from "./client";
 import type { MetadataStore } from "../../store/metadata-store";
@@ -416,12 +417,20 @@ export class GoogleDriveFs implements IFileSystem {
 			} else if (cached) {
 				throw new Error(`Cannot create directory "${path}": "${currentPath}" is a file`);
 			} else {
-				const newFolder = await this.client.createFolder(
-					part,
-					parentId
-				);
-				this.cache.setFile(currentPath, newFolder);
-				parentId = newFolder.id;
+				// Guard against Google Drive's same-name folder creation:
+				// check Drive before creating a potentially duplicate folder
+				const existing = await this.client.findChildByName(parentId, part, FOLDER_MIME);
+				if (existing) {
+					this.cache.setFile(currentPath, existing);
+					parentId = existing.id;
+				} else {
+					const newFolder = await this.client.createFolder(
+						part,
+						parentId
+					);
+					this.cache.setFile(currentPath, newFolder);
+					parentId = newFolder.id;
+				}
 			}
 		}
 

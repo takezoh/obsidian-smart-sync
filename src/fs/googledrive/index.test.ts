@@ -78,15 +78,16 @@ describe("GoogleDriveFs.ensureFolder file collision", () => {
 
 describe("GoogleDriveFs.write contentChecksum", () => {
 	it("includes contentChecksum in backendMeta when returned by Drive API", async () => {
+		const uploadResult = {
+			id: "file1",
+			name: "test.md",
+			mimeType: "text/plain",
+			modifiedTime: "2024-01-01T00:00:00.000Z",
+			size: "5",
+			md5Checksum: "abc123hash",
+		};
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
-			async () => mockRes({
-				id: "file1",
-				name: "test.md",
-				mimeType: "text/plain",
-				modifiedTime: "2024-01-01T00:00:00.000Z",
-				size: "5",
-				md5Checksum: "abc123hash",
-			})
+			async () => mockRes(uploadResult)
 		);
 
 		const { GoogleDriveFs } = await import("./index");
@@ -109,13 +110,18 @@ describe("GoogleDriveFs.write contentChecksum", () => {
 	});
 
 	it("handles missing contentChecksum (Google Docs) gracefully", async () => {
+		const uploadResult = {
+			id: "doc1",
+			name: "doc.gdoc",
+			mimeType: "application/vnd.google-apps.document",
+			modifiedTime: "2024-01-01T00:00:00.000Z",
+		};
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
-			async () => mockRes({
-				id: "doc1",
-				name: "doc.gdoc",
-				mimeType: "application/vnd.google-apps.document",
-				modifiedTime: "2024-01-01T00:00:00.000Z",
-			})
+			async (opts: string | { url: string }) => {
+				const url = typeof opts === "string" ? opts : opts.url;
+				if (url.includes("uploadType=")) return mockRes(uploadResult);
+				return mockRes({ files: [] });
+			}
 		);
 
 		const { GoogleDriveFs } = await import("./index");

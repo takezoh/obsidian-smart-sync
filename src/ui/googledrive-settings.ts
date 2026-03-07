@@ -1,4 +1,4 @@
-import { Notice, Setting, TextComponent, debounce } from "obsidian";
+import { Notice, Setting, TextComponent } from "obsidian";
 import type { SmartSyncSettings } from "../settings";
 import type {
 	BackendConnectionActions,
@@ -8,7 +8,7 @@ import type { GoogleDriveBackendData } from "../fs/googledrive/provider";
 
 /**
  * Renders Google Drive-specific settings UI:
- * folder ID input, connection status, and auth code flow.
+ * connection status and auth code flow.
  */
 export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 	readonly backendType = "googledrive";
@@ -16,51 +16,18 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 	render(
 		containerEl: HTMLElement,
 		settings: SmartSyncSettings,
-		onSave: (updates: Record<string, unknown>) => Promise<void>,
+		_onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions
 	): void {
 		const data = (settings.backendData["googledrive"] ?? {}) as Partial<GoogleDriveBackendData>;
 
-		const debouncedSave = debounce(
-			(updates: Record<string, unknown>) => {
-				onSave(updates)
-					.then(() => actions.refreshDisplay())
-					.catch((err) => {
-						console.error("Smart Sync: failed to save settings", err);
-						new Notice("Failed to save settings. Please try again.");
-					});
-			},
-			1000,
-			true
-		);
-
-		new Setting(containerEl)
-			.setName("Google Drive folder ID")
-			.setDesc(
-				"The ID of the Google Drive folder to sync with. Found in the folder's URL."
-			)
-			.addText((text) =>
-				text
-					// eslint-disable-next-line obsidianmd/ui/sentence-case
-					.setPlaceholder("e.g. 1AbCdEfGhIjKlMnOpQrStUvWxYz")
-					.setValue(data.driveFolderId ?? "")
-					.onChange((value) => {
-						debouncedSave({ driveFolderId: value });
-					})
-			);
-
-		// Connection status — derived from backend data directly
-		const isAuthenticated = !!data.refreshToken;
-		const isConnected = !!data.refreshToken && !!data.driveFolderId;
+		const isConnected = !!data.refreshToken;
 
 		let statusDesc: string;
 		let statusClass: string;
 		if (isConnected) {
 			statusDesc = "\u25cf Connected";
 			statusClass = "smart-sync-status-connected";
-		} else if (isAuthenticated) {
-			statusDesc = "\u25cf Authorized (folder ID required)";
-			statusClass = "smart-sync-status-partial";
 		} else {
 			statusDesc = "\u25cf Not connected";
 			statusClass = "smart-sync-status-disconnected";
@@ -73,10 +40,10 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 			.addButton((button) =>
 				button
 					.setButtonText(
-						isAuthenticated ? "Disconnect" : "Connect to Google Drive"
+						isConnected ? "Disconnect" : "Connect to Google Drive"
 					)
 					.onClick(async () => {
-						if (isAuthenticated) {
+						if (isConnected) {
 							await actions.disconnect();
 						} else {
 							await actions.startAuth();
@@ -85,8 +52,20 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 					})
 			);
 
+		// Show remote vault folder ID when connected (read-only)
+		if (isConnected && data.remoteVaultFolderId) {
+			new Setting(containerEl)
+				.setName("Remote vault folder")
+				.setDesc("Automatically managed folder in Google Drive")
+				.addText((text) =>
+					text
+						.setValue(data.remoteVaultFolderId ?? "")
+						.setDisabled(true)
+				);
+		}
+
 		// Auth code input (only when not yet authorized)
-		if (!isAuthenticated) {
+		if (!isConnected) {
 			let authCodeInput: TextComponent;
 			new Setting(containerEl)
 				.setName("Authorization code")
