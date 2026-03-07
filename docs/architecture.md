@@ -23,7 +23,7 @@ src/
 │   ├── backend-manager.ts          # BackendManager — backend initialization, auth flow, lifecycle
 │   ├── local/
 │   │   ├── index.ts                # LocalFs — Obsidian Vault API wrapper
-│   │   └── dot-path-adapter.ts     # DotPathAdapter — .smartsync/ adapter (raw Vault adapter API)
+│   │   └── dot-path-adapter.ts     # DotPathAdapter — dot-prefixed path adapter (raw Vault adapter API)
 │   ├── googledrive/
 │   │   ├── index.ts                # GoogleDriveFs — IFileSystem implementation (cache + incremental fetch)
 │   │   ├── client.ts               # DriveClient — Drive REST API v3 client
@@ -721,14 +721,16 @@ Shows progress text during sync (e.g., "Syncing 3/15...").
 
 Gitignore-compatible pattern matching via the `ignore` npm package (~8 KB, browser/mobile safe). Supports negation (`!`), comments (`#`), trailing slash (directory-only), and last-match-wins semantics.
 
-Two separate pattern lists:
+A single **`ignorePatterns`** list is used on both desktop and mobile. Platform-specific defaults are applied on fresh install:
 
-- **`ignorePatterns`** — applied on desktop. Default: `[]` (nothing ignored).
-- **`mobileIgnorePatterns`** — applied on mobile **instead of** `ignorePatterns`. Default: `["*", "!**/*.md", "!**/*.canvas", "!**/*.base"]` (sync only markdown, canvas, and bases). Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings.
+- **Desktop**: `[]` (nothing ignored — sync everything).
+- **Mobile**: `["*", "!*/", "!**/*.md", "!**/*.canvas", "!**/*.base"]` (sync only markdown, canvas, and bases). Note: with the default settings, images, PDFs, and other attachments are **not** synced on mobile. This is a deliberate trade-off for bandwidth and storage savings.
 
-`isExcluded()` in `SyncService` selects the appropriate list based on `SyncServiceDeps.isMobile`.
+Defaults are defined in `DEFAULT_DESKTOP_IGNORE_PATTERNS` / `DEFAULT_MOBILE_IGNORE_PATTERNS` (`settings.ts`) and applied in `loadSettings()` (`main.ts`) when `ignorePatterns` is empty.
 
-Dot-prefixed files and directories (`.obsidian/`, `.trash/`, etc.) are already excluded by Obsidian's Vault API — `getAllLoadedFiles()` does not index them, so they never appear in `LocalFs.list()` and do not need ignore patterns.
+### Dot-prefixed paths
+
+Obsidian's Vault API (`getAllLoadedFiles()`) excludes dot-prefixed directories (`.obsidian/`, `.trash/`, etc.). To sync them, users can list paths in the **`syncDotPaths`** setting (e.g. `[".templates", ".obsidian"]`). `DotPathAdapter` scans these paths via the raw Vault adapter API. `.smartsync` is always implicitly included.
 
 ### Mobile max file size
 
