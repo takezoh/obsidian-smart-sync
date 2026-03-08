@@ -102,6 +102,18 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 		this.auth = new GoogleDriveCustomAuthProvider();
 	}
 
+	async disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>> {
+		await this.auth.revokeAuth();
+		const data = getGDriveCustomData(settings);
+		return {
+			...DEFAULT_GDRIVE_CUSTOM_DATA,
+			customClientId: data.customClientId,
+			customClientSecret: data.customClientSecret,
+			customScope: data.customScope,
+			customRedirectUri: data.customRedirectUri,
+		};
+	}
+
 	protected getData(settings: SmartSyncSettings): GoogleDriveBackendData {
 		return getGDriveCustomData(settings);
 	}

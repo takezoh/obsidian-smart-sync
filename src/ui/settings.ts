@@ -31,6 +31,13 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 					dropdown
 						.setValue(this.plugin.settings.backendType)
 						.onChange(async (value) => {
+							const previousType = this.plugin.settings.backendType;
+							if (previousType !== value) {
+								const prevProvider = getBackendProvider(previousType);
+								if (prevProvider && prevProvider.isConnected(this.plugin.settings)) {
+									await this.plugin.backendManager.disconnectBackend();
+								}
+							}
 							this.plugin.settings.backendType = value;
 							await this.plugin.saveSettings();
 							await this.plugin.backendManager.initBackend();

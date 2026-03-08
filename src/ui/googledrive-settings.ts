@@ -156,7 +156,6 @@ export class GoogleDriveCustomSettingsRenderer implements IBackendSettingsRender
 					.setButtonText(
 						isConnected ? "Disconnect" : "Connect to Google Drive"
 					)
-					.setDisabled(!isConnected && (!data.customClientId || !data.customClientSecret))
 					.onClick(async () => {
 						if (isConnected) {
 							await actions.disconnect();
