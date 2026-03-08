@@ -18,34 +18,6 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl).setName("Sync").setHeading();
 
-		// Backend selector
-		const backends = getAllBackendProviders();
-		if (backends.length > 1) {
-			new Setting(containerEl)
-				.setName("Remote backend")
-				.setDesc("The remote storage service to sync with.")
-				.addDropdown((dropdown) => {
-					for (const b of backends) {
-						dropdown.addOption(b.type, b.displayName);
-					}
-					dropdown
-						.setValue(this.plugin.settings.backendType)
-						.onChange(async (value) => {
-							const previousType = this.plugin.settings.backendType;
-							if (previousType !== value) {
-								const prevProvider = getBackendProvider(previousType);
-								if (prevProvider && prevProvider.isConnected(this.plugin.settings)) {
-									await this.plugin.backendManager.disconnectBackend();
-								}
-							}
-							this.plugin.settings.backendType = value;
-							await this.plugin.saveSettings();
-							await this.plugin.backendManager.initBackend();
-							this.display();
-						});
-				});
-		}
-
 		new Setting(containerEl)
 			.setName("Auto-sync interval")
 			.setDesc("Sync automatically every n minutes. Set to 0 to disable.")
@@ -98,6 +70,34 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// Backend selector
+		const backends = getAllBackendProviders();
+		if (backends.length > 1) {
+			new Setting(containerEl)
+				.setName("Remote backend")
+				.setDesc("The remote storage service to sync with.")
+				.addDropdown((dropdown) => {
+					for (const b of backends) {
+						dropdown.addOption(b.type, b.displayName);
+					}
+					dropdown
+						.setValue(this.plugin.settings.backendType)
+						.onChange(async (value) => {
+							const previousType = this.plugin.settings.backendType;
+							if (previousType !== value) {
+								const prevProvider = getBackendProvider(previousType);
+								if (prevProvider && prevProvider.isConnected(this.plugin.settings)) {
+									await this.plugin.backendManager.disconnectBackend();
+								}
+							}
+							this.plugin.settings.backendType = value;
+							await this.plugin.saveSettings();
+							await this.plugin.backendManager.initBackend();
+							this.display();
+						});
+				});
+		}
 
 		// --- Backend-specific settings (config + connection flow) ---
 		const provider = getBackendProvider(
