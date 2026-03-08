@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SyncExecutor } from "./executor";
 import type { FileEntity } from "../fs/types";
 import type { SyncDecision, SyncRecord } from "./types";
@@ -389,6 +389,94 @@ describe("SyncExecutor", () => {
 		const record = stateStore.records.get("empty.md");
 		expect(record).toBeDefined();
 		expect(record!.localSize).toBe(0);
+	});
+
+	it("ask strategy invokes onConflict before three-way merge when enableThreeWayMerge is true", async () => {
+		const localFile = makeFile("conflict.md", "local ver", 2000);
+		localFs.files.set("conflict.md", localFile);
+		const remoteFile = makeFile("conflict.md", "remote ver", 3000);
+		remoteFs.files.set("conflict.md", remoteFile);
+
+		const prevSync: SyncRecord = {
+			path: "conflict.md",
+			hash: "",
+			localMtime: 500,
+			remoteMtime: 500,
+			localSize: 5,
+			remoteSize: 5,
+			syncedAt: 400,
+		};
+		stateStore.records.set("conflict.md", prevSync);
+
+		const decisions: SyncDecision[] = [
+			{
+				path: "conflict.md",
+				decision: "conflict_both_modified",
+				local: localFile.entity,
+				remote: remoteFile.entity,
+				prevSync,
+			},
+		];
+
+		const onConflict = vi.fn().mockResolvedValue("keep_local");
+		const executor = new SyncExecutor({
+			localFs,
+			remoteFs,
+			stateStore: stateStore as unknown as SyncStateStore,
+			defaultStrategy: "ask",
+			enableThreeWayMerge: true,
+			onConflict,
+		});
+
+		const result = await executor.execute(decisions);
+		expect(result.conflicts).toBe(1);
+		// onConflict must be called — ask strategy should not be silently bypassed
+		expect(onConflict).toHaveBeenCalledTimes(1);
+		// User chose keep_local, so local content should be pushed to remote
+		const remoteContent = remoteFs.files.get("conflict.md");
+		expect(new TextDecoder().decode(remoteContent!.content)).toBe("local ver");
+	});
+
+	it("keep_newer strategy auto-escalates to three_way_merge without callback", async () => {
+		const localFile = makeFile("conflict.md", "local ver", 2000);
+		localFs.files.set("conflict.md", localFile);
+		const remoteFile = makeFile("conflict.md", "remote ver", 3000);
+		remoteFs.files.set("conflict.md", remoteFile);
+
+		const prevSync: SyncRecord = {
+			path: "conflict.md",
+			hash: "",
+			localMtime: 500,
+			remoteMtime: 500,
+			localSize: 5,
+			remoteSize: 5,
+			syncedAt: 400,
+		};
+		stateStore.records.set("conflict.md", prevSync);
+
+		const decisions: SyncDecision[] = [
+			{
+				path: "conflict.md",
+				decision: "conflict_both_modified",
+				local: localFile.entity,
+				remote: remoteFile.entity,
+				prevSync,
+			},
+		];
+
+		const onConflict = vi.fn().mockResolvedValue("keep_local");
+		const executor = new SyncExecutor({
+			localFs,
+			remoteFs,
+			stateStore: stateStore as unknown as SyncStateStore,
+			defaultStrategy: "keep_newer",
+			enableThreeWayMerge: true,
+			onConflict,
+		});
+
+		await executor.execute(decisions);
+		// keep_newer should auto-escalate — onConflict should NOT be called
+		expect(onConflict).not.toHaveBeenCalled();
 	});
 
 	it("enableThreeWayMerge does not override keep_local strategy", async () => {

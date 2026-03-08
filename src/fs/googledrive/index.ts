@@ -491,6 +491,7 @@ export class GoogleDriveFs implements IFileSystem {
 				hierarchy,
 				this._changesPageToken,
 				this.logger,
+				this.metadataStore,
 			);
 
 			if (result.needsFullScan) return null;
@@ -498,6 +499,11 @@ export class GoogleDriveFs implements IFileSystem {
 			// Persist updated folder hierarchy (not the token — caller commits that)
 			if (result.hierarchyChanged) {
 				void this.saveFolderHierarchy(hierarchy);
+			}
+
+			// Remove deleted files from MetadataStore
+			if (result.deletedPaths.length > 0 && this.metadataStore) {
+				void this.metadataStore.deleteFiles(result.deletedPaths);
 			}
 
 			// Store raw DriveFile objects so ensureInitialized() can pre-populate the cache

@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { applyIncrementalChanges } from "./incremental-sync";
+import { applyIncrementalChanges, applyIncrementalChangesLightweight } from "./incremental-sync";
 import type { IncrementalSyncContext } from "./incremental-sync";
 import type { DriveFile } from "./types";
 import type { DriveMetadataCache } from "./metadata-cache";
 import type { DriveClient } from "./client";
+import type { MetadataStore, FileRecord } from "../../store/metadata-store";
+import type { FolderHierarchy } from "./folder-hierarchy";
 
 vi.mock("obsidian");
 
@@ -124,5 +126,140 @@ describe("applyIncrementalChanges", () => {
 		await expect(applyIncrementalChanges(ctx, "valid-token")).rejects.toThrow(
 			"Network error"
 		);
+	});
+});
+
+describe("applyIncrementalChangesLightweight", () => {
+	let listChanges: ReturnType<typeof vi.fn>;
+	let mockClient: DriveClient;
+	let hierarchy: FolderHierarchy;
+	const rootId = "root-folder-id";
+
+	function makeLogger() {
+		return {
+			info: vi.fn(),
+			warn: vi.fn(),
+			error: vi.fn(),
+			debug: vi.fn(),
+		} as unknown as import("../../logging/logger").Logger;
+	}
+
+	function makeMetadataStore(records: FileRecord<DriveFile>[]): MetadataStore<DriveFile> {
+		return {
+			open: vi.fn(),
+			getByFileIds: vi.fn().mockResolvedValue(
+				records,
+			),
+			deleteFiles: vi.fn(),
+		} as unknown as MetadataStore<DriveFile>;
+	}
+
+	beforeEach(() => {
+		listChanges = vi.fn();
+		mockClient = { listChanges } as unknown as DriveClient;
+		hierarchy = {
+			rootFolderId: rootId,
+			folders: new Map([
+				["folder-1", { name: "docs", parentId: rootId }],
+			]),
+		};
+	});
+
+	it("resolves deleted file paths via MetadataStore instead of falling back to full scan", async () => {
+		listChanges.mockResolvedValue({
+			changes: [
+				{ fileId: "deleted-file-1", file: { id: "deleted-file-1", trashed: true, name: "old.md", mimeType: "text/plain" }, removed: false },
+			],
+			nextPageToken: undefined,
+			newStartPageToken: "new-token",
+		});
+
+		const metadataStore = makeMetadataStore([
+			{ path: "docs/old.md", file: { id: "deleted-file-1", name: "old.md", mimeType: "text/plain", trashed: false } as DriveFile, isFolder: false },
+		]);
+
+		const result = await applyIncrementalChangesLightweight(
+			mockClient, hierarchy, "old-token", makeLogger(), metadataStore,
+		);
+
+		expect(result.needsFullScan).toBe(false);
+		expect("deletedPaths" in result && result.deletedPaths).toEqual(["docs/old.md"]);
+		expect("changedPaths" in result && result.changedPaths.has("docs/old.md")).toBe(true);
+	});
+
+	it("falls back to full scan on deletion when no MetadataStore is provided", async () => {
+		listChanges.mockResolvedValue({
+			changes: [
+				{ fileId: "deleted-file-1", file: { id: "deleted-file-1", trashed: true, name: "old.md", mimeType: "text/plain" }, removed: false },
+			],
+			nextPageToken: undefined,
+			newStartPageToken: "new-token",
+		});
+
+		const result = await applyIncrementalChangesLightweight(
+			mockClient, hierarchy, "old-token", makeLogger(),
+		);
+
+		expect(result).toEqual({ needsFullScan: true });
+	});
+
+	it("falls back to full scan when MetadataStore lookup fails", async () => {
+		listChanges.mockResolvedValue({
+			changes: [
+				{ fileId: "deleted-file-1", removed: true, file: null },
+			],
+			nextPageToken: undefined,
+			newStartPageToken: "new-token",
+		});
+
+		const metadataStore = {
+			open: vi.fn(),
+			getByFileIds: vi.fn().mockRejectedValue(new Error("IDB error")),
+		} as unknown as MetadataStore<DriveFile>;
+
+		const result = await applyIncrementalChangesLightweight(
+			mockClient, hierarchy, "old-token", makeLogger(), metadataStore,
+		);
+
+		expect(result).toEqual({ needsFullScan: true });
+	});
+
+	it("handles mixed additions and deletions in the same batch", async () => {
+		const addedFile: DriveFile = {
+			id: "new-file-1",
+			name: "new.md",
+			mimeType: "text/plain",
+			trashed: false,
+			parents: [rootId],
+			modifiedTime: "2026-01-01T00:00:00Z",
+			size: "100",
+			md5Checksum: "abc123",
+		};
+
+		listChanges.mockResolvedValue({
+			changes: [
+				{ fileId: "new-file-1", file: addedFile, removed: false },
+				{ fileId: "deleted-file-1", removed: true, file: null },
+			],
+			nextPageToken: undefined,
+			newStartPageToken: "new-token",
+		});
+
+		const metadataStore = makeMetadataStore([
+			{ path: "removed.md", file: { id: "deleted-file-1", name: "removed.md", mimeType: "text/plain", trashed: false } as DriveFile, isFolder: false },
+		]);
+
+		const result = await applyIncrementalChangesLightweight(
+			mockClient, hierarchy, "old-token", makeLogger(), metadataStore,
+		);
+
+		expect(result.needsFullScan).toBe(false);
+		if (!result.needsFullScan) {
+			expect(result.changedPaths.has("new.md")).toBe(true);
+			expect(result.changedPaths.has("removed.md")).toBe(true);
+			expect(result.changedFiles.has("new.md")).toBe(true);
+			expect(result.changedFiles.has("removed.md")).toBe(false); // Deleted — not in changedFiles
+			expect(result.deletedPaths).toEqual(["removed.md"]);
+		}
 	});
 });

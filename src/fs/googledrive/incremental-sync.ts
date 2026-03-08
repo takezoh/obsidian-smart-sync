@@ -146,12 +146,14 @@ export async function applyIncrementalChanges(
 export interface LightweightIncrementalResult {
 	needsFullScan: false;
 	newToken: string;
-	/** Changed file paths (not folders) */
+	/** Changed file paths (not folders) — includes both modified and deleted paths */
 	changedPaths: Set<string>;
 	/** FileEntity for each changed/added file (not deleted files) */
 	changedFiles: Map<string, FileEntity>;
 	/** Raw DriveFile objects for cache pre-population during delta sync execution */
 	changedDriveFiles: Map<string, DriveFile>;
+	/** Paths of remotely deleted files (resolved via MetadataStore) */
+	deletedPaths: string[];
 	/** True if the folder hierarchy was modified */
 	hierarchyChanged: boolean;
 }
@@ -160,31 +162,42 @@ export interface LightweightIncrementalResult {
  * Apply incremental changes using only the folder hierarchy (no full metadata cache).
  * Used by getRemoteChangedPaths() to detect remote changes without loading the full cache.
  *
- * Limitations:
- * - If any file is remotely deleted/trashed, returns needsFullScan=true
- *   (can't resolve path without idToPath cache)
- * - Only handles file additions and modifications in the lightweight path
+ * When deletions are detected and a MetadataStore is available, resolves deleted file
+ * paths via the fileId index instead of falling back to a full scan.
+ * Falls back to needsFullScan=true only when MetadataStore is unavailable.
  */
 export async function applyIncrementalChangesLightweight(
 	client: DriveClient,
 	hierarchy: FolderHierarchy,
 	changesPageToken: string,
 	logger?: Logger,
+	metadataStore?: MetadataStore<DriveFile>,
 ): Promise<LightweightIncrementalResult | { needsFullScan: true }> {
+	const deletedFileIds: string[] = [];
+
 	const fetchResult = await fetchAllChanges(
 		client,
 		changesPageToken,
 		logger,
-		// Abort on any removal/trash — can't resolve path without full cache
-		(changes) => {
-			for (const change of changes) {
-				if (change.removed || change.file?.trashed) {
-					logger?.info("Lightweight incremental: remote deletion detected, falling back to full scan");
-					return true;
+		// Collect deleted fileIds; abort only if we can't resolve them
+		!metadataStore
+			? (changes) => {
+					for (const change of changes) {
+						if (change.removed || change.file?.trashed) {
+							logger?.info("Lightweight incremental: remote deletion detected, no metadata store — falling back to full scan");
+							return true;
+						}
+					}
+					return false;
 				}
-			}
-			return false;
-		},
+			: (changes) => {
+					for (const change of changes) {
+						if (change.removed || change.file?.trashed) {
+							deletedFileIds.push(change.fileId);
+						}
+					}
+					return false;
+				},
 	);
 	if ("needsFullScan" in fetchResult) return fetchResult;
 
@@ -198,6 +211,9 @@ export async function applyIncrementalChangesLightweight(
 	for (const change of sorted) {
 		if (!change.file) continue;
 		const file = change.file;
+
+		// Skip deleted/trashed files — handled separately below
+		if (change.removed || file.trashed) continue;
 
 		if (file.mimeType === FOLDER_MIME) {
 			// Update folder hierarchy
@@ -236,7 +252,31 @@ export async function applyIncrementalChangesLightweight(
 		}
 	}
 
-	return { needsFullScan: false, newToken: fetchResult.newToken, changedPaths, changedFiles, changedDriveFiles, hierarchyChanged };
+	// Resolve paths for deleted files via MetadataStore
+	const deletedPaths: string[] = [];
+	if (deletedFileIds.length > 0 && metadataStore) {
+		try {
+			await metadataStore.open();
+			const records = await metadataStore.getByFileIds(deletedFileIds);
+			for (const record of records) {
+				deletedPaths.push(record.path);
+				changedPaths.add(record.path);
+			}
+			if (records.length < deletedFileIds.length) {
+				logger?.info("Lightweight incremental: some deleted fileIds not found in metadata store", {
+					requested: deletedFileIds.length,
+					resolved: records.length,
+				});
+			}
+		} catch (err) {
+			logger?.warn("Lightweight incremental: failed to resolve deleted file paths, falling back to full scan", {
+				message: err instanceof Error ? err.message : String(err),
+			});
+			return { needsFullScan: true };
+		}
+	}
+
+	return { needsFullScan: false, newToken: fetchResult.newToken, changedPaths, changedFiles, changedDriveFiles, deletedPaths, hierarchyChanged };
 }
 
 /** Persist incremental changes to IndexedDB */

@@ -2,6 +2,7 @@ import { IDBHelper, sanitizeDbName } from "./idb-helper";
 
 const FILES_STORE = "files";
 const META_STORE = "meta";
+const FILE_ID_INDEX = "fileId";
 
 export interface FileRecord<T> {
 	path: string;
@@ -22,12 +23,18 @@ export class MetadataStore<T> {
 		this.helper = new IDBHelper({
 			dbName: `${config.dbNamePrefix}-${sanitizeDbName(vaultId)}`,
 			version: config.version,
-			onUpgrade: (db) => {
+			onUpgrade: (db, _oldVersion, tx) => {
+				let filesStore: IDBObjectStore;
 				if (!db.objectStoreNames.contains(FILES_STORE)) {
-					db.createObjectStore(FILES_STORE, { keyPath: "path" });
+					filesStore = db.createObjectStore(FILES_STORE, { keyPath: "path" });
+				} else {
+					filesStore = tx.objectStore(FILES_STORE);
 				}
 				if (!db.objectStoreNames.contains(META_STORE)) {
 					db.createObjectStore(META_STORE, { keyPath: "key" });
+				}
+				if (!filesStore.indexNames.contains(FILE_ID_INDEX)) {
+					filesStore.createIndex(FILE_ID_INDEX, "file.id", { unique: false });
 				}
 			},
 		});
@@ -113,6 +120,19 @@ export class MetadataStore<T> {
 				const result = req.result as { key: string; value: string } | undefined;
 				return result?.value ?? null;
 			};
+		});
+	}
+
+	/** Look up file records by backend file IDs using the fileId index */
+	async getByFileIds(fileIds: string[]): Promise<FileRecord<T>[]> {
+		if (fileIds.length === 0) return [];
+		return this.helper.runTransaction(FILES_STORE, "readonly", (tx) => {
+			const index = tx.objectStore(FILES_STORE).index(FILE_ID_INDEX);
+			const requests = fileIds.map((id) => index.get(id));
+			return () =>
+				requests
+					.map((req) => req.result as FileRecord<T> | undefined)
+					.filter((r): r is FileRecord<T> => r !== undefined);
 		});
 	}
 

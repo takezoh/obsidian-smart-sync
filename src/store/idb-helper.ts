@@ -1,7 +1,7 @@
 export interface IDBOpenConfig {
 	dbName: string;
 	version: number;
-	onUpgrade: (db: IDBDatabase, oldVersion: number) => void;
+	onUpgrade: (db: IDBDatabase, oldVersion: number, tx: IDBTransaction) => void;
 }
 
 /**
@@ -38,7 +38,7 @@ export class IDBHelper {
 				reject(new Error(`IndexedDB "${dbName}" is blocked by another connection`));
 			};
 			request.onupgradeneeded = (event) => {
-				onUpgrade(request.result, event.oldVersion);
+				onUpgrade(request.result, event.oldVersion, request.transaction!);
 			};
 			request.onsuccess = () => resolve(request.result);
 			request.onerror = () =>

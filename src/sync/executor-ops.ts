@@ -98,14 +98,15 @@ export async function executeConflict(
 	const { path } = decision;
 	let strategy = ctx.defaultStrategy;
 
+	if (strategy === "ask" && ctx.onConflict) {
+		strategy = await ctx.onConflict(decision);
+	}
 	if (
 		ctx.enableThreeWayMerge &&
 		decision.prevSync &&
-		(strategy === "keep_newer" || strategy === "ask")
+		strategy === "keep_newer"
 	) {
 		strategy = "three_way_merge";
-	} else if (strategy === "ask" && ctx.onConflict) {
-		strategy = await ctx.onConflict(decision);
 	}
 
 	// Lazy fallback: only prompts the user if 3-way merge actually fails

@@ -8,7 +8,7 @@ interface TestFile {
 	mimeType: string;
 }
 
-const CONFIG = { dbNamePrefix: "test-metadata", version: 1 };
+const CONFIG = { dbNamePrefix: "test-metadata", version: 2 };
 
 describe("MetadataStore", () => {
 
@@ -80,7 +80,7 @@ describe("MetadataStore", () => {
 	});
 
 	it("uses config for db name prefix", async () => {
-		const store = new MetadataStore<TestFile>("my-vault", { dbNamePrefix: "custom-prefix", version: 1 });
+		const store = new MetadataStore<TestFile>("my-vault", { dbNamePrefix: "custom-prefix", version: 2 });
 		await store.open();
 
 		await store.saveAll(
@@ -90,6 +90,51 @@ describe("MetadataStore", () => {
 
 		const loaded = await store.loadAll();
 		expect(loaded.files).toHaveLength(1);
+
+		await store.close();
+	});
+
+	it("getByFileIds returns records matching file.id", async () => {
+		const store = new MetadataStore<TestFile>("test-vault-fileid", CONFIG);
+		await store.open();
+
+		await store.saveAll(
+			[
+				{ path: "a.md", file: { id: "id-a", name: "a.md", mimeType: "text/plain" }, isFolder: false },
+				{ path: "b.md", file: { id: "id-b", name: "b.md", mimeType: "text/plain" }, isFolder: false },
+				{ path: "c.md", file: { id: "id-c", name: "c.md", mimeType: "text/plain" }, isFolder: false },
+			],
+			new Map(),
+		);
+
+		const results = await store.getByFileIds(["id-a", "id-c"]);
+		expect(results).toHaveLength(2);
+		expect(results.map((r) => r.path).sort()).toEqual(["a.md", "c.md"]);
+
+		await store.close();
+	});
+
+	it("getByFileIds returns empty array for non-existent IDs", async () => {
+		const store = new MetadataStore<TestFile>("test-vault-fileid-miss", CONFIG);
+		await store.open();
+
+		await store.saveAll(
+			[{ path: "a.md", file: { id: "id-a", name: "a.md", mimeType: "text/plain" }, isFolder: false }],
+			new Map(),
+		);
+
+		const results = await store.getByFileIds(["id-nonexistent"]);
+		expect(results).toHaveLength(0);
+
+		await store.close();
+	});
+
+	it("getByFileIds returns empty for empty input", async () => {
+		const store = new MetadataStore<TestFile>("test-vault-fileid-empty", CONFIG);
+		await store.open();
+
+		const results = await store.getByFileIds([]);
+		expect(results).toHaveLength(0);
 
 		await store.close();
 	});

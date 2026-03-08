@@ -436,7 +436,7 @@ describe("GoogleDriveFs cache persistence", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token-abc"),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("persist-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
+		const store = new MetadataStore<DriveFile>("persist-test", { dbNamePrefix: "smart-sync-drive", version: 2 });
 
 		// First instance: fullScan populates and persists
 		const fs1 = new GoogleDriveFs(mockClient, "root", undefined, store);
@@ -475,7 +475,7 @@ describe("GoogleDriveFs cache persistence", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("mismatch-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
+		const store = new MetadataStore<DriveFile>("mismatch-test", { dbNamePrefix: "smart-sync-drive", version: 2 });
 
 		// Persist with rootFolderId = "root1"
 		const fs1 = new GoogleDriveFs(mockClient1, "root1", undefined, store);
@@ -510,7 +510,7 @@ describe("GoogleDriveFs cache persistence", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("invalidate-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
+		const store = new MetadataStore<DriveFile>("invalidate-test", { dbNamePrefix: "smart-sync-drive", version: 2 });
 		const fs = new GoogleDriveFs(mockClient, "root", undefined, store);
 		await fs.list();
 		// Wait for async persist
