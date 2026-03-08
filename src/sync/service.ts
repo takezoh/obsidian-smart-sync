@@ -27,11 +27,16 @@ interface RemoteFsWithDelta extends IFileSystem {
 	getRemoteChangedPaths(): Promise<{
 		changedPaths: Set<string>;
 		changedFiles: Map<string, FileEntity>;
+		newToken: string;
 	} | null>;
+	commitDeltaToken(newToken: string): Promise<void>;
 }
 
 function hasGetRemoteChangedPaths(fs: IFileSystem): fs is RemoteFsWithDelta {
-	return typeof (fs as RemoteFsWithDelta).getRemoteChangedPaths === "function";
+	return (
+		typeof (fs as RemoteFsWithDelta).getRemoteChangedPaths === "function" &&
+		typeof (fs as RemoteFsWithDelta).commitDeltaToken === "function"
+	);
 }
 
 export interface SyncServiceDeps {
@@ -234,9 +239,12 @@ export class SyncService {
 		let entities: MixedEntity[];
 		const localDelta = this._changeDetector?.consume() ?? null;
 
-		let remoteDelta: { changedPaths: Set<string>; changedFiles: Map<string, FileEntity> } | null = null;
-		if (localDelta !== null && hasGetRemoteChangedPaths(remoteFs)) {
-			remoteDelta = await remoteFs.getRemoteChangedPaths();
+		// Save typed reference for committing delta token later
+		const remoteFsWithDelta = hasGetRemoteChangedPaths(remoteFs) ? remoteFs : null;
+
+		let remoteDelta: { changedPaths: Set<string>; changedFiles: Map<string, FileEntity>; newToken: string } | null = null;
+		if (localDelta !== null && remoteFsWithDelta !== null) {
+			remoteDelta = await remoteFsWithDelta.getRemoteChangedPaths();
 		}
 
 		const useDeltaSync =
@@ -254,10 +262,11 @@ export class SyncService {
 			if (allChangedPaths.size === 0) {
 				// No changes detected — skip sync
 				this.deps.logger?.info("Delta sync: no changes detected, skipping");
-				// Save snapshot for next time
+				// Save snapshot and advance remote token so next sync starts from current state
 				if (this._changeDetector) {
 					await this._changeDetector.saveSnapshot();
 				}
+				await remoteFsWithDelta!.commitDeltaToken(remoteDelta.newToken);
 				this.deps.notify("Everything up to date");
 				return { pushed: 0, pulled: 0, conflicts: 0, errors: [], mergeConflictPaths: [], conflictRecords: [] };
 			}
@@ -373,6 +382,11 @@ export class SyncService {
 		});
 
 		const result = await executor.execute(decisions);
+
+		// Commit the remote delta token after successful delta sync execution
+		if (useDeltaSync && remoteDelta !== null && remoteFsWithDelta !== null) {
+			await remoteFsWithDelta.commitDeltaToken(remoteDelta.newToken);
+		}
 
 		// Save local snapshot after successful sync
 		if (this._changeDetector) {

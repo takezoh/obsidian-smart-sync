@@ -105,6 +105,17 @@ export class MetadataStore<T> {
 		});
 	}
 
+	/** Read a single meta entry by key */
+	async getMeta(key: string): Promise<string | null> {
+		return this.helper.runTransaction(META_STORE, "readonly", (tx) => {
+			const req = tx.objectStore(META_STORE).get(key);
+			return () => {
+				const result = req.result as { key: string; value: string } | undefined;
+				return result?.value ?? null;
+			};
+		});
+	}
+
 	/** Clear all stores */
 	async clear(): Promise<void> {
 		await this.helper.runTransaction([FILES_STORE, META_STORE], "readwrite", (tx) => {

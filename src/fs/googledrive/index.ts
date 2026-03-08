@@ -38,6 +38,9 @@ export class GoogleDriveFs implements IFileSystem {
 	/** Latest changes start page token (for incremental sync) */
 	private _changesPageToken: string | null = null;
 
+	/** DriveFile objects from getRemoteChangedPaths(), applied to cache on ensureInitialized() */
+	private _pendingCacheEntries: Map<string, DriveFile> | null = null;
+
 	constructor(client: DriveClient, rootFolderId: string, logger?: Logger, metadataStore?: MetadataStore<DriveFile>) {
 		this.client = client;
 		this.rootFolderId = rootFolderId;
@@ -72,6 +75,8 @@ export class GoogleDriveFs implements IFileSystem {
 
 		// Save folder hierarchy for lightweight incremental sync
 		void this.saveFolderHierarchy(buildFolderHierarchy(allFiles, this.rootFolderId));
+
+		this._pendingCacheEntries = null;
 	}
 
 	/** Ensure the metadata cache is initialized (load from IDB or full scan) */
@@ -80,6 +85,12 @@ export class GoogleDriveFs implements IFileSystem {
 			const loaded = await this.loadFromCache();
 			if (!loaded) {
 				await this.fullScan();
+			} else if (this._pendingCacheEntries) {
+				// Apply delta entries from getRemoteChangedPaths() on top of the IDB-loaded cache
+				for (const [path, file] of this._pendingCacheEntries) {
+					this.cache.setFile(path, file);
+				}
+				this._pendingCacheEntries = null;
 			}
 		}
 	}
@@ -151,11 +162,10 @@ export class GoogleDriveFs implements IFileSystem {
 		if (!this.metadataStore) return null;
 		try {
 			await this.metadataStore.open();
-			const { meta } = await this.metadataStore.loadAll();
-			const storedRootId = meta.get("rootFolderId");
+			const storedRootId = await this.metadataStore.getMeta("rootFolderId");
 			if (storedRootId !== this.rootFolderId) return null;
 
-			const json = meta.get(FOLDER_HIERARCHY_META_KEY);
+			const json = await this.metadataStore.getMeta(FOLDER_HIERARCHY_META_KEY);
 			if (!json) return null;
 
 			return deserializeFolderHierarchy(json);
@@ -216,6 +226,8 @@ export class GoogleDriveFs implements IFileSystem {
 			} else if (this._changesPageToken) {
 				await this._applyIncrementalChanges();
 			}
+
+			this._pendingCacheEntries = null;
 
 			const entities: FileEntity[] = [];
 			for (const [path, driveFile] of this.cache.entries()) {
@@ -453,6 +465,10 @@ export class GoogleDriveFs implements IFileSystem {
 	 * Detect remote changes without loading the full metadata cache.
 	 * Uses only the folder hierarchy (stored separately as a compact blob).
 	 *
+	 * Does NOT advance _changesPageToken — caller must call commitDeltaToken() to commit.
+	 * This ensures the full-sync fallback (when threshold is exceeded) can still
+	 * reprocess changes via list() → _applyIncrementalChanges().
+	 *
 	 * Returns null if:
 	 * - No folder hierarchy in IDB (full scan needed)
 	 * - No changes page token
@@ -462,6 +478,7 @@ export class GoogleDriveFs implements IFileSystem {
 	async getRemoteChangedPaths(): Promise<{
 		changedPaths: Set<string>;
 		changedFiles: Map<string, FileEntity>;
+		newToken: string;
 	} | null> {
 		return this.cacheMutex.run(async () => {
 			if (!this._changesPageToken) return null;
@@ -478,21 +495,38 @@ export class GoogleDriveFs implements IFileSystem {
 
 			if (result.needsFullScan) return null;
 
-			this._changesPageToken = result.newToken;
-
-			// Persist updated folder hierarchy and token
+			// Persist updated folder hierarchy (not the token — caller commits that)
 			if (result.hierarchyChanged) {
 				void this.saveFolderHierarchy(hierarchy);
 			}
-			// Persist new token to IDB so loadFromCache() gets the updated token
-			if (this.metadataStore) {
-				void this.metadataStore.putMeta("changesStartPageToken", result.newToken);
-			}
+
+			// Store raw DriveFile objects so ensureInitialized() can pre-populate the cache
+			// for executor read/write operations during delta sync
+			this._pendingCacheEntries = result.changedDriveFiles;
 
 			return {
 				changedPaths: result.changedPaths,
 				changedFiles: result.changedFiles,
+				newToken: result.newToken,
 			};
+		});
+	}
+
+	/**
+	 * Commit a delta token obtained from getRemoteChangedPaths().
+	 * Advances _changesPageToken and persists it to IDB.
+	 * Also clears any pending cache entries (already applied or no longer needed).
+	 *
+	 * Must be called by the service after successful delta sync (or "no changes" early exit).
+	 * Not called on full-sync fallback — in that case list() reprocesses the changes.
+	 */
+	async commitDeltaToken(newToken: string): Promise<void> {
+		return this.cacheMutex.run(async () => {
+			this._changesPageToken = newToken;
+			this._pendingCacheEntries = null;
+			if (this.metadataStore) {
+				void this.metadataStore.putMeta("changesStartPageToken", newToken);
+			}
 		});
 	}
 

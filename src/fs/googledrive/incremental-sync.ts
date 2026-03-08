@@ -123,6 +123,8 @@ export interface LightweightIncrementalResult {
 	changedPaths: Set<string>;
 	/** FileEntity for each changed/added file (not deleted files) */
 	changedFiles: Map<string, FileEntity>;
+	/** Raw DriveFile objects for cache pre-population during delta sync execution */
+	changedDriveFiles: Map<string, DriveFile>;
 	/** True if the folder hierarchy was modified */
 	hierarchyChanged: boolean;
 }
@@ -149,6 +151,7 @@ export async function applyIncrementalChangesLightweight(
 
 		const changedPaths = new Set<string>();
 		const changedFiles = new Map<string, FileEntity>();
+		const changedDriveFiles = new Map<string, DriveFile>();
 
 		do {
 			const result = await client.listChanges(changesPageToken, pageToken);
@@ -192,6 +195,7 @@ export async function applyIncrementalChangesLightweight(
 					if (!path) continue;
 
 					changedPaths.add(path);
+					changedDriveFiles.set(path, file);
 					// Build FileEntity from Drive metadata
 					const mtime = file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0;
 					changedFiles.set(path, {
@@ -214,7 +218,7 @@ export async function applyIncrementalChangesLightweight(
 			}
 		} while (pageToken);
 
-		return { needsFullScan: false, newToken: currentToken, changedPaths, changedFiles, hierarchyChanged };
+		return { needsFullScan: false, newToken: currentToken, changedPaths, changedFiles, changedDriveFiles, hierarchyChanged };
 	} catch (err) {
 		if (isHttpError(err, 410)) {
 			logger?.info("Changes token expired (410), falling back to full scan");
