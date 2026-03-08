@@ -144,6 +144,7 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 			customClientSecret: data.customClientSecret,
 			customScope: data.customScope,
 			customRedirectUri: data.customRedirectUri,
+			remoteVaultFolderId: data.remoteVaultFolderId,
 		};
 	}
 
