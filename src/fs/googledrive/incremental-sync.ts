@@ -1,4 +1,4 @@
-import type { DriveFile } from "./types";
+import type { DriveFile, DriveChange } from "./types";
 import { FOLDER_MIME } from "./types";
 import type { DriveMetadataCache } from "./metadata-cache";
 import type { DriveClient } from "./client";
@@ -17,6 +17,75 @@ export interface IncrementalSyncContext {
 }
 
 /**
+ * Fetch all changes across pages, handling 410/401 errors.
+ * Returns the accumulated changes and the new start page token,
+ * or signals that a full scan is needed.
+ *
+ * @param onPage Optional callback invoked per page before accumulation.
+ *               Return `true` to abort and trigger a full scan.
+ */
+async function fetchAllChanges(
+	client: DriveClient,
+	changesPageToken: string,
+	logger?: Logger,
+	onPage?: (changes: DriveChange[]) => boolean,
+): Promise<{ changes: DriveChange[]; newToken: string } | { needsFullScan: true }> {
+	try {
+		let pageToken: string | undefined;
+		let currentToken = changesPageToken;
+		const allChanges: DriveChange[] = [];
+
+		do {
+			const result = await client.listChanges(changesPageToken, pageToken);
+
+			if (onPage?.(result.changes)) {
+				return { needsFullScan: true };
+			}
+
+			allChanges.push(...result.changes);
+			pageToken = result.nextPageToken;
+			if (result.newStartPageToken) {
+				currentToken = result.newStartPageToken;
+			}
+		} while (pageToken);
+
+		return { changes: allChanges, newToken: currentToken };
+	} catch (err) {
+		if (isHttpError(err, 410)) {
+			logger?.info("Changes token expired (410), falling back to full scan");
+			return { needsFullScan: true };
+		}
+		if (isHttpError(err, 401)) {
+			logger?.warn("listChanges returned 401 — page token may be invalid, falling back to full scan");
+			return { needsFullScan: true };
+		}
+		throw err;
+	}
+}
+
+/**
+ * Sort changes so folders come first (shallow before deep for full cache mode).
+ * When a getPath function is provided, folders are additionally sorted by path depth.
+ */
+function sortChanges(
+	changes: DriveChange[],
+	getPath?: (fileId: string) => string | undefined,
+): DriveChange[] {
+	return [...changes].sort((a, b) => {
+		const aIsFolder = a.file?.mimeType === FOLDER_MIME ? 0 : 1;
+		const bIsFolder = b.file?.mimeType === FOLDER_MIME ? 0 : 1;
+		if (aIsFolder !== bIsFolder) return aIsFolder - bIsFolder;
+		// Among folders, sort by cached path depth (shallow first)
+		if (aIsFolder === 0 && getPath) {
+			const aPath = getPath(a.fileId) ?? "";
+			const bPath = getPath(b.fileId) ?? "";
+			return aPath.split("/").length - bPath.split("/").length;
+		}
+		return 0;
+	});
+}
+
+/**
  * Apply incremental changes from the Drive changes.list API.
  * Updates the metadata cache and returns the new page token and changed paths.
  * Falls back to full re-scan (by setting initialized=false) on 410.
@@ -27,92 +96,50 @@ export async function applyIncrementalChanges(
 	ctx: IncrementalSyncContext,
 	changesPageToken: string,
 ): Promise<{ newToken: string; needsFullScan: false; changedPaths: Set<string> } | { needsFullScan: true }> {
-	try {
-		let pageToken: string | undefined;
-		let currentToken = changesPageToken;
+	const fetchResult = await fetchAllChanges(ctx.client, changesPageToken, ctx.logger);
+	if ("needsFullScan" in fetchResult) return fetchResult;
 
-		let totalChanges = 0;
-		const updatedRecords: { path: string; file: DriveFile; isFolder: boolean }[] = [];
-		const deletedPaths: string[] = [];
+	const sorted = sortChanges(fetchResult.changes, (id) => ctx.cache.getPathById(id));
 
-		do {
-			const result = await ctx.client.listChanges(
-				changesPageToken,
-				pageToken
-			);
+	const updatedRecords: { path: string; file: DriveFile; isFolder: boolean }[] = [];
+	const deletedPaths: string[] = [];
 
-			// Process folder changes first (shallow before deep) so paths resolve correctly
-			const sorted = [...result.changes].sort((a, b) => {
-				const aIsFolder =
-					a.file?.mimeType === FOLDER_MIME ? 0 : 1;
-				const bIsFolder =
-					b.file?.mimeType === FOLDER_MIME ? 0 : 1;
-				if (aIsFolder !== bIsFolder) return aIsFolder - bIsFolder;
-				// Among folders, sort by cached path depth (shallow first)
-				if (aIsFolder === 0) {
-					const aPath = ctx.cache.getPathById(a.fileId) ?? "";
-					const bPath = ctx.cache.getPathById(b.fileId) ?? "";
-					return aPath.split("/").length - bPath.split("/").length;
-				}
-				return 0;
-			});
-
-			totalChanges += sorted.length;
-			for (const change of sorted) {
-				if (change.removed || change.file?.trashed) {
-					const path = ctx.cache.getPathById(change.fileId);
-					if (path) {
-						// Collect descendants before removing
-						deletedPaths.push(path, ...ctx.cache.collectDescendants(path));
-						ctx.cache.removePath(path);
-					}
-				} else if (change.file) {
-					ctx.cache.applyFileChange(change.file);
-					const updatedPath = ctx.cache.getPathById(change.file.id);
-					if (updatedPath) {
-						updatedRecords.push({
-							path: updatedPath,
-							file: change.file,
-							isFolder: change.file.mimeType === FOLDER_MIME,
-						});
-					}
-				}
+	for (const change of sorted) {
+		if (change.removed || change.file?.trashed) {
+			const path = ctx.cache.getPathById(change.fileId);
+			if (path) {
+				// Collect descendants before removing
+				deletedPaths.push(path, ...ctx.cache.collectDescendants(path));
+				ctx.cache.removePath(path);
 			}
-
-			pageToken = result.nextPageToken;
-			if (result.newStartPageToken) {
-				currentToken = result.newStartPageToken;
+		} else if (change.file) {
+			ctx.cache.applyFileChange(change.file);
+			const updatedPath = ctx.cache.getPathById(change.file.id);
+			if (updatedPath) {
+				updatedRecords.push({
+					path: updatedPath,
+					file: change.file,
+					isFolder: change.file.mimeType === FOLDER_MIME,
+				});
 			}
-		} while (pageToken);
-
-		if (totalChanges > 0) {
-			ctx.logger?.info("Incremental changes applied", { changeCount: totalChanges });
-			void persistIncrementalChanges(ctx, updatedRecords, deletedPaths, currentToken);
 		}
-
-		// Collect changed file paths (not folders)
-		const changedPaths = new Set<string>();
-		for (const r of updatedRecords) {
-			if (!r.isFolder) changedPaths.add(r.path);
-		}
-		for (const p of deletedPaths) {
-			changedPaths.add(p);
-		}
-
-		return { newToken: currentToken, needsFullScan: false, changedPaths };
-	} catch (err) {
-		if (isHttpError(err, 410)) {
-			// Token expired, fall back to full scan
-			ctx.logger?.info("Changes token expired (410), falling back to full scan");
-			return { needsFullScan: true };
-		}
-		if (isHttpError(err, 401)) {
-			// Page token may be invalid, fall back to full scan
-			ctx.logger?.warn("listChanges returned 401 — page token may be invalid, falling back to full scan");
-			return { needsFullScan: true };
-		}
-		throw err;
 	}
+
+	if (sorted.length > 0) {
+		ctx.logger?.info("Incremental changes applied", { changeCount: sorted.length });
+		void persistIncrementalChanges(ctx, updatedRecords, deletedPaths, fetchResult.newToken);
+	}
+
+	// Collect changed file paths (not folders)
+	const changedPaths = new Set<string>();
+	for (const r of updatedRecords) {
+		if (!r.isFolder) changedPaths.add(r.path);
+	}
+	for (const p of deletedPaths) {
+		changedPaths.add(p);
+	}
+
+	return { newToken: fetchResult.newToken, needsFullScan: false, changedPaths };
 }
 
 /** Result of a lightweight incremental sync (no full cache) */
@@ -144,92 +171,72 @@ export async function applyIncrementalChangesLightweight(
 	changesPageToken: string,
 	logger?: Logger,
 ): Promise<LightweightIncrementalResult | { needsFullScan: true }> {
-	try {
-		let pageToken: string | undefined;
-		let currentToken = changesPageToken;
-		let hierarchyChanged = false;
-
-		const changedPaths = new Set<string>();
-		const changedFiles = new Map<string, FileEntity>();
-		const changedDriveFiles = new Map<string, DriveFile>();
-
-		do {
-			const result = await client.listChanges(changesPageToken, pageToken);
-
-			// If any change is a removal/trash, we can't resolve the path → full scan
-			for (const change of result.changes) {
+	const fetchResult = await fetchAllChanges(
+		client,
+		changesPageToken,
+		logger,
+		// Abort on any removal/trash — can't resolve path without full cache
+		(changes) => {
+			for (const change of changes) {
 				if (change.removed || change.file?.trashed) {
 					logger?.info("Lightweight incremental: remote deletion detected, falling back to full scan");
-					return { needsFullScan: true };
+					return true;
 				}
 			}
+			return false;
+		},
+	);
+	if ("needsFullScan" in fetchResult) return fetchResult;
 
-			// Process folder changes first (shallow before deep)
-			const sorted = [...result.changes].sort((a, b) => {
-				const aIsFolder = a.file?.mimeType === FOLDER_MIME ? 0 : 1;
-				const bIsFolder = b.file?.mimeType === FOLDER_MIME ? 0 : 1;
-				return aIsFolder - bIsFolder;
+	const sorted = sortChanges(fetchResult.changes);
+
+	let hierarchyChanged = false;
+	const changedPaths = new Set<string>();
+	const changedFiles = new Map<string, FileEntity>();
+	const changedDriveFiles = new Map<string, DriveFile>();
+
+	for (const change of sorted) {
+		if (!change.file) continue;
+		const file = change.file;
+
+		if (file.mimeType === FOLDER_MIME) {
+			// Update folder hierarchy
+			const parentId = file.parents?.find(
+				(p) => p === hierarchy.rootFolderId || hierarchy.folders.has(p)
+			);
+			if (parentId) {
+				hierarchy.folders.set(file.id, { name: file.name, parentId });
+				hierarchyChanged = true;
+			}
+		} else {
+			// Resolve file path via folder hierarchy
+			const parentId = file.parents?.find(
+				(p) => p === hierarchy.rootFolderId || hierarchy.folders.has(p)
+			);
+			if (!parentId) continue; // Can't resolve — skip (conservative: might miss some changes → next full scan)
+
+			const path = resolvePathFromHierarchy(hierarchy, parentId, file.name);
+			if (!path) continue;
+
+			changedPaths.add(path);
+			changedDriveFiles.set(path, file);
+			// Build FileEntity from Drive metadata
+			const mtime = file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0;
+			changedFiles.set(path, {
+				path,
+				isDirectory: false,
+				size: parseInt(file.size ?? "0", 10),
+				mtime: Number.isNaN(mtime) ? 0 : mtime,
+				hash: "",
+				backendMeta: {
+					driveId: file.id,
+					contentChecksum: file.md5Checksum,
+				},
 			});
-
-			for (const change of sorted) {
-				if (!change.file) continue;
-				const file = change.file;
-
-				if (file.mimeType === FOLDER_MIME) {
-					// Update folder hierarchy
-					const parentId = file.parents?.find(
-						(p) => p === hierarchy.rootFolderId || hierarchy.folders.has(p)
-					);
-					if (parentId) {
-						hierarchy.folders.set(file.id, { name: file.name, parentId });
-						hierarchyChanged = true;
-					}
-				} else {
-					// Resolve file path via folder hierarchy
-					const parentId = file.parents?.find(
-						(p) => p === hierarchy.rootFolderId || hierarchy.folders.has(p)
-					);
-					if (!parentId) continue; // Can't resolve — skip (conservative: might miss some changes → next full scan)
-
-					const path = resolvePathFromHierarchy(hierarchy, parentId, file.name);
-					if (!path) continue;
-
-					changedPaths.add(path);
-					changedDriveFiles.set(path, file);
-					// Build FileEntity from Drive metadata
-					const mtime = file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0;
-					changedFiles.set(path, {
-						path,
-						isDirectory: false,
-						size: parseInt(file.size ?? "0", 10),
-						mtime: Number.isNaN(mtime) ? 0 : mtime,
-						hash: "",
-						backendMeta: {
-							driveId: file.id,
-							contentChecksum: file.md5Checksum,
-						},
-					});
-				}
-			}
-
-			pageToken = result.nextPageToken;
-			if (result.newStartPageToken) {
-				currentToken = result.newStartPageToken;
-			}
-		} while (pageToken);
-
-		return { needsFullScan: false, newToken: currentToken, changedPaths, changedFiles, changedDriveFiles, hierarchyChanged };
-	} catch (err) {
-		if (isHttpError(err, 410)) {
-			logger?.info("Changes token expired (410), falling back to full scan");
-			return { needsFullScan: true };
 		}
-		if (isHttpError(err, 401)) {
-			logger?.warn("listChanges returned 401 — page token may be invalid, falling back to full scan");
-			return { needsFullScan: true };
-		}
-		throw err;
 	}
+
+	return { needsFullScan: false, newToken: fetchResult.newToken, changedPaths, changedFiles, changedDriveFiles, hierarchyChanged };
 }
 
 /** Persist incremental changes to IndexedDB */

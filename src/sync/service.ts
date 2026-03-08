@@ -235,68 +235,13 @@ export class SyncService {
 			await this._changeDetector.initialize();
 		}
 
-		// Attempt delta sync if both local and remote deltas are available
-		let entities: MixedEntity[];
-		const localDelta = this._changeDetector?.consume() ?? null;
-
-		// Save typed reference for committing delta token later
-		const remoteFsWithDelta = hasGetRemoteChangedPaths(remoteFs) ? remoteFs : null;
-
-		let remoteDelta: { changedPaths: Set<string>; changedFiles: Map<string, FileEntity>; newToken: string } | null = null;
-		if (localDelta !== null && remoteFsWithDelta !== null) {
-			remoteDelta = await remoteFsWithDelta.getRemoteChangedPaths();
+		const buildResult = await this.buildEntities(localFs, remoteFs);
+		if (buildResult === "up_to_date") {
+			this.deps.notify("Everything up to date");
+			return { pushed: 0, pulled: 0, conflicts: 0, errors: [], mergeConflictPaths: [], conflictRecords: [] };
 		}
 
-		const useDeltaSync =
-			localDelta !== null &&
-			remoteDelta !== null &&
-			(localDelta.size + remoteDelta.changedPaths.size) <= DELTA_THRESHOLD;
-
-		if (useDeltaSync && localDelta !== null && remoteDelta !== null) {
-			// Merge local + remote changed paths
-			const allChangedPaths = new Set<string>([
-				...localDelta,
-				...remoteDelta.changedPaths,
-			]);
-
-			if (allChangedPaths.size === 0) {
-				// No changes detected — skip sync
-				this.deps.logger?.info("Delta sync: no changes detected, skipping");
-				// Save snapshot and advance remote token so next sync starts from current state
-				if (this._changeDetector) {
-					await this._changeDetector.saveSnapshot();
-				}
-				await remoteFsWithDelta!.commitDeltaToken(remoteDelta.newToken);
-				this.deps.notify("Everything up to date");
-				return { pushed: 0, pulled: 0, conflicts: 0, errors: [], mergeConflictPaths: [], conflictRecords: [] };
-			}
-
-			this.deps.logger?.info("Delta sync", {
-				localChanges: localDelta.size,
-				remoteChanges: remoteDelta.changedPaths.size,
-				total: allChangedPaths.size,
-			});
-
-			entities = await buildChangedEntities(
-				allChangedPaths,
-				localFs,
-				remoteDelta.changedFiles,
-				this.stateStore,
-			);
-		} else {
-			// Fall back to full sync
-			if (localDelta !== null || remoteDelta !== null) {
-				this.deps.logger?.info("Delta sync: falling back to full sync", {
-					localDeltaSize: localDelta?.size ?? null,
-					remoteDeltaSize: remoteDelta?.changedPaths.size ?? null,
-				});
-			}
-			entities = await buildMixedEntities(
-				localFs,
-				remoteFs,
-				this.stateStore
-			);
-		}
+		const { entities, deltaToken, remoteFsWithDelta } = buildResult;
 
 		const isMobile = this.deps.isMobile();
 		const maxBytes = settings.mobileMaxFileSizeMB * 1024 * 1024;
@@ -384,8 +329,8 @@ export class SyncService {
 		const result = await executor.execute(decisions);
 
 		// Commit the remote delta token after successful delta sync execution
-		if (useDeltaSync && remoteDelta !== null && remoteFsWithDelta !== null) {
-			await remoteFsWithDelta.commitDeltaToken(remoteDelta.newToken);
+		if (deltaToken !== undefined && remoteFsWithDelta !== null) {
+			await remoteFsWithDelta.commitDeltaToken(deltaToken);
 		}
 
 		// Save local snapshot after successful sync
@@ -462,6 +407,71 @@ export class SyncService {
 		}
 
 		return result;
+	}
+
+	/**
+	 * Build the list of entities to sync, using delta detection when available.
+	 * Returns "up_to_date" when delta sync detects zero changes.
+	 */
+	private async buildEntities(
+		localFs: IFileSystem,
+		remoteFs: IFileSystem,
+	): Promise<
+		| { entities: MixedEntity[]; deltaToken?: string; remoteFsWithDelta: RemoteFsWithDelta | null }
+		| "up_to_date"
+	> {
+		const localDelta = this._changeDetector?.consume() ?? null;
+		const remoteFsWithDelta = hasGetRemoteChangedPaths(remoteFs) ? remoteFs : null;
+
+		let remoteDelta: { changedPaths: Set<string>; changedFiles: Map<string, FileEntity>; newToken: string } | null = null;
+		if (localDelta !== null && remoteFsWithDelta !== null) {
+			remoteDelta = await remoteFsWithDelta.getRemoteChangedPaths();
+		}
+
+		const useDeltaSync =
+			localDelta !== null &&
+			remoteDelta !== null &&
+			(localDelta.size + remoteDelta.changedPaths.size) <= DELTA_THRESHOLD;
+
+		if (useDeltaSync && localDelta !== null && remoteDelta !== null) {
+			const allChangedPaths = new Set<string>([
+				...localDelta,
+				...remoteDelta.changedPaths,
+			]);
+
+			if (allChangedPaths.size === 0) {
+				this.deps.logger?.info("Delta sync: no changes detected, skipping");
+				if (this._changeDetector) {
+					await this._changeDetector.saveSnapshot();
+				}
+				await remoteFsWithDelta!.commitDeltaToken(remoteDelta.newToken);
+				return "up_to_date";
+			}
+
+			this.deps.logger?.info("Delta sync", {
+				localChanges: localDelta.size,
+				remoteChanges: remoteDelta.changedPaths.size,
+				total: allChangedPaths.size,
+			});
+
+			const entities = await buildChangedEntities(
+				allChangedPaths,
+				localFs,
+				remoteDelta.changedFiles,
+				this.stateStore,
+			);
+			return { entities, deltaToken: remoteDelta.newToken, remoteFsWithDelta };
+		}
+
+		// Fall back to full sync
+		if (localDelta !== null || remoteDelta !== null) {
+			this.deps.logger?.info("Delta sync: falling back to full sync", {
+				localDeltaSize: localDelta?.size ?? null,
+				remoteDeltaSize: remoteDelta?.changedPaths.size ?? null,
+			});
+		}
+		const entities = await buildMixedEntities(localFs, remoteFs, this.stateStore);
+		return { entities, remoteFsWithDelta };
 	}
 
 	/**
