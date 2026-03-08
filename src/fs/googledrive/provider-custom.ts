@@ -1,7 +1,9 @@
+import type { App } from "obsidian";
 import { Notice } from "obsidian";
 import { getBackendData } from "../backend";
 import type { SmartSyncSettings } from "../../settings";
 import type { Logger } from "../../logging/logger";
+import type { RemoteVaultResolution } from "../../sync/remote-vault";
 import { GoogleAuthDirect } from "./auth";
 import type { IGoogleAuth } from "./auth";
 import { GoogleDriveAuthProviderBase, GoogleDriveProviderBase } from "./provider-base";
@@ -100,6 +102,19 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 	constructor() {
 		super();
 		this.auth = new GoogleDriveCustomAuthProvider();
+	}
+
+	async resolveRemoteVault(
+		_app: App,
+		settings: SmartSyncSettings,
+		vaultName: string,
+		logger?: Logger,
+	): Promise<RemoteVaultResolution> {
+		const data = this.getData(settings);
+		if (!data.remoteVaultFolderId) {
+			throw new Error("Remote vault folder id is required for custom OAuth. Set it in the plugin settings.");
+		}
+		return super.resolveRemoteVault(_app, settings, vaultName, logger);
 	}
 
 	async disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>> {

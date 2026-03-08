@@ -1,4 +1,4 @@
-import { Setting } from "obsidian";
+import { Notice, Setting } from "obsidian";
 import type { SmartSyncSettings } from "../settings";
 import type {
 	BackendConnectionActions,
@@ -137,6 +137,19 @@ export class GoogleDriveCustomSettingsRenderer implements IBackendSettingsRender
 					})
 			);
 
+		new Setting(containerEl)
+			.setName("Remote vault folder id") // eslint-disable-line obsidianmd/ui/sentence-case -- Google Drive folder ID
+			.setDesc("Google Drive folder id to sync with") // eslint-disable-line obsidianmd/ui/sentence-case -- Google Drive folder ID
+			.addText((text) =>
+				text
+					.setPlaceholder("1AbC...") // eslint-disable-line obsidianmd/ui/sentence-case -- example value
+					.setValue(data.remoteVaultFolderId ?? "")
+					.setDisabled(isConnected)
+					.onChange(async (value) => {
+						await onSave({ remoteVaultFolderId: value.trim() });
+					})
+			);
+
 		let statusDesc: string;
 		let statusClass: string;
 		if (isConnected) {
@@ -160,21 +173,15 @@ export class GoogleDriveCustomSettingsRenderer implements IBackendSettingsRender
 						if (isConnected) {
 							await actions.disconnect();
 						} else {
+							const current = (settings.backendData["googledrive-custom"] ?? {}) as Partial<GoogleDriveCustomBackendData>;
+							if (!current.remoteVaultFolderId) {
+								new Notice("Enter a remote vault folder id first"); // eslint-disable-line obsidianmd/ui/sentence-case -- field name
+								return;
+							}
 							await actions.startAuth();
 						}
 						actions.refreshDisplay();
 					})
 			);
-
-		if (isConnected && data.remoteVaultFolderId) {
-			new Setting(containerEl)
-				.setName("Remote vault folder")
-				.setDesc("Automatically managed folder in Google Drive")
-				.addText((text) =>
-					text
-						.setValue(data.remoteVaultFolderId ?? "")
-						.setDisabled(true)
-				);
-		}
 	}
 }
