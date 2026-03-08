@@ -33,7 +33,8 @@ src/
 │   │   ├── provider-custom.ts      # GoogleDriveCustomProvider — custom OAuth backend (user credentials + PKCE)
 │   │   ├── types.ts                # Drive API response types, validation functions + DriveFileRecord alias
 │   │   ├── metadata-cache.ts       # DriveMetadataCache — in-memory path↔ID, folder, children index
-│   │   ├── incremental-sync.ts     # applyIncrementalChanges() — changes.list delta sync
+│   │   ├── incremental-sync.ts     # applyIncrementalChanges() + applyIncrementalChangesLightweight() — changes.list delta sync
+│   │   ├── folder-hierarchy.ts     # FolderHierarchy — lightweight folder path resolution without full cache
 │   │   ├── remote-vault.ts         # resolveGDriveRemoteVault() — Drive-specific remote vault resolution
 │   │   ├── resumable-upload.ts     # ResumableUploader — resumable upload (>5 MB) with resume-on-retry
 │   │   └── test-helpers.ts         # Drive test utilities (spyRequestUrl, mockSettings, etc.)
@@ -42,12 +43,13 @@ src/
 ├── sync/
 │   ├── remote-vault.ts             # Remote vault types & constants (REMOTE_VAULT_ROOT, RemoteVaultResolution)
 │   ├── types.ts                   # SyncRecord, MixedEntity, DecisionType, ConflictStrategy, SyncDecision
-│   ├── engine.ts                   # buildMixedEntities() + computeDecisions() — 3-state decision table
+│   ├── engine.ts                   # buildMixedEntities() + buildChangedEntities() + computeDecisions()
 │   ├── executor.ts                 # SyncExecutor — executes IFileSystem operations based on decisions
 │   ├── executor-ops.ts             # executePush/Pull/Delete/Conflict — per-phase operation functions
-│   ├── service.ts                  # SyncService — sync orchestration (retry, exclusion, UI integration)
+│   ├── service.ts                  # SyncService — sync orchestration (delta/full sync, retry, exclusion)
 │   ├── error.ts                    # getErrorInfo() — HTTP status & Retry-After extraction
-│   ├── state.ts                    # SyncStateStore — IndexedDB-based sync state persistence
+│   ├── state.ts                    # SyncStateStore — IndexedDB-based sync state + local snapshot persistence
+│   ├── local-change-detector.ts    # LocalChangeDetector — local change detection via snapshot diff + vault events
 │   ├── conflict.ts                 # resolveConflict() — conflict resolution strategy execution
 │   └── merge.ts                    # threeWayMerge() + isMergeEligible() — 3-way merge via node-diff3
 ├── store/
@@ -90,7 +92,8 @@ src/
 │  - Identity tracking (clears sync state on change)  │
 ├─────────────────────────────────────────────────────┤
 │  sync/service.ts (SyncService)                      │
-│  - Sync orchestration                               │
+│  - Sync orchestration (delta / full sync)           │
+│  - Delta detection: local snapshot + remote changes │
 │  - Retry (exponential backoff + jitter, max 3)      │
 │  - Mutual exclusion (syncMutex)                     │
 │  - Mass deletion safety net                         │
@@ -101,7 +104,7 @@ src/
 │  - 3-state decision    - Translates decisions into  │
 │    table                 IFileSystem operations      │
 │  - MixedEntity build   - Updates SyncRecords        │
-│                        - Delegates conflict resolve  │
+│    (full + delta)      - Delegates conflict resolve  │
 ├─────────────────────────────────────────────────────┤
 │  sync/state.ts         sync/conflict.ts             │
 │  - IndexedDB CRUD      - resolveConflict()          │
@@ -318,7 +321,12 @@ To add a backend: implement `IAuthProvider` + `IBackendProvider` in `fs/<backend
 
 ### 3-state decision table (`sync/engine.ts`)
 
-`buildMixedEntities()` combines local, remote, and last sync states. `computeDecisions()` determines sync actions based on the following table:
+Two entity-building strategies feed the same decision logic:
+
+- **`buildMixedEntities()`** — Full scan. Combines `localFs.list()`, `remoteFs.list()`, and `stateStore.getAll()`. Used for initial sync and fallback when delta detection is unavailable or unreliable.
+- **`buildChangedEntities()`** — Delta scan. Only processes changed paths (O(delta)). Uses `localFs.stat()` (O(1) in-memory), remote metadata from `changes.list`, and `stateStore.getMany()` (batch IDB lookup). For locally-only changed paths, reconstructs the remote state from `SyncRecord` (since the remote is unchanged, `hasRemoteChanged()` returns false). See [Incremental sync](#incremental-sync-change-driven-sync) for the full flow.
+
+`computeDecisions()` determines sync actions based on the following table:
 
 | Local | Remote | Last sync | → Decision |
 |-------|--------|-----------|-----------|
@@ -403,15 +411,26 @@ Each decision operates on a unique path (at most one decision per path per sync)
 
 ### SyncService (`sync/service.ts`)
 
-Orchestrates the entire sync flow.
+Orchestrates the entire sync flow with delta/full sync branching.
 
 1. Acquire `syncMutex.run()` for mutual exclusion
-2. `buildMixedEntities()` + filter (exclude patterns + mobile include/size checks) + `resolveEmptyHashes()` + `computeDecisions()`
-3. Mass deletion safety check (see below)
-4. If 5+ conflicts with `ask` strategy → show `ConflictSummaryModal`
-5. Execute `SyncExecutor.execute()`
-6. Save backend state to `settings.backendData[type]` via `readBackendState()`
-7. Send result notifications
+2. **Entity building** (`buildEntities()`):
+   - Consume local changes from `LocalChangeDetector` (snapshot diff at startup, vault events at runtime)
+   - Query remote changes from `GoogleDriveFs.getRemoteChangedPaths()` (lightweight: folder hierarchy only, no full cache)
+   - If both deltas are available and combined size ≤ 500 → **delta sync** via `buildChangedEntities()`
+   - If combined size is 0 → **early return** ("up to date", no IDB reads at all)
+   - Otherwise → **full sync** fallback via `buildMixedEntities()`
+3. Filter (exclude patterns + mobile include/size checks) + `resolveEmptyHashes()` + `computeDecisions()`
+4. Mass deletion safety check (see below)
+5. If 5+ conflicts with `ask` strategy → show `ConflictSummaryModal`
+6. Execute `SyncExecutor.execute()`
+7. **Post-sync state updates**:
+   - Commit delta token to `GoogleDriveFs` via `commitDeltaToken()` (advances `changes.list` cursor)
+   - Save local snapshot via `LocalChangeDetector.saveSnapshot()`
+   - Save backend state to `settings.backendData[type]` via `readBackendState()`
+8. Send result notifications
+
+The `RemoteFsWithDelta` interface (checked via `hasGetRemoteChangedPaths()` type guard) extends `IFileSystem` with `getRemoteChangedPaths()` and `commitDeltaToken()`. This keeps delta sync opt-in per backend — backends without delta support fall through to full sync.
 
 **Retry**: Max 3 attempts for transport-level errors (network failures, 5xx). Exponential backoff (`2^n * 1000ms`) ± 50% jitter. Immediate abort for:
 - 401/403: Auth error
@@ -483,14 +502,28 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 - `folders: Set<string>` — set of folder paths
 - `children: Map<string, Set<string>>` — parent path → direct child paths (O(k) child lookups for rename/delete/listDir)
 - First `list()` call tries to load from IndexedDB (`MetadataStore<DriveFile>`); falls back to full scan via `listAllFiles()` if no cache or `rootFolderId` changed
-- After full scan, the cache is persisted to IndexedDB for faster reload
+- After full scan, the cache is persisted to IndexedDB for faster reload. A `FolderHierarchy` snapshot is also saved for lightweight delta sync
 - Subsequent calls use `changes.list` API for incremental updates (also persisted incrementally)
+- On startup, `list()` applies incremental changes even on the first call (after loading cache from IDB)
 - Falls back to full scan on HTTP 410 (expired token)
 
 **Mutex-protected cache**:
 - `cacheMutex` protects cache reads and writes
 - Network I/O (downloads/uploads) executes outside the mutex (prevents deadlocks)
 - TOCTOU guard: `read()` resolves ID → releases lock → downloads → re-acquires lock for consistency check
+
+**Stale cache guard**: `write()`, `delete()`, and `rename()` validate file IDs in the cache before updating it. If the cache was modified concurrently (e.g., by `applyIncrementalChanges()` during network I/O), the stale update is skipped with a warning log.
+
+**Delta sync support** (`RemoteFsWithDelta`):
+- `getRemoteChangedPaths()` — Loads only the folder hierarchy (~100 records, ~1-5ms) and `changesPageToken` from IDB, then calls `applyIncrementalChangesLightweight()` to detect remote changes without loading the full metadata cache. Returns changed paths + `FileEntity` objects + raw `DriveFile` objects, or `null` if folder hierarchy is unavailable. Does **not** advance the token — the caller commits via `commitDeltaToken()` after successful sync execution
+- `commitDeltaToken(newToken)` — Advances `_changesPageToken`, persists it to IDB, and stores `_pendingCacheEntries` (DriveFile objects from the lightweight sync) to pre-populate the full cache when it is eventually loaded via `ensureInitialized()`
+
+**Folder hierarchy** (`fs/googledrive/folder-hierarchy.ts`):
+- `FolderHierarchy` — Maps `folderId → { name, parentId }` (~50 bytes/folder, ~5KB for 100 folders)
+- `resolvePathFromHierarchy()` — Traverses parent ID chain up to `rootFolderId` to resolve file paths
+- `buildFolderHierarchy()` / `serializeFolderHierarchy()` / `deserializeFolderHierarchy()` — Build and persist hierarchy from Drive file lists
+- Saved as a single JSON blob in `MetadataStore` under the `folderHierarchy` key
+- Updated after `fullScan()` and `applyIncrementalChanges()`
 
 ### GoogleDriveProviderBase & GoogleDriveAuthProviderBase (`fs/googledrive/provider-base.ts`)
 
@@ -574,13 +607,97 @@ IndexedDB-based. Database name is `smart-sync-{vaultId}` (independent per vault)
 
 **Object stores**:
 1. `sync-records` — `SyncRecord` persistence (keyPath: `path`)
-2. `sync-content` — File content storage for 3-way merge (keyPath: `path`). Only stores content for files passing `isMergeEligible()` — i.e., text extensions (`.md`, `.txt`, `.json`, `.canvas`, etc.) and ≤ 1 MB in size
+2. `sync-content` — File content storage for 3-way merge (keyPath: `path`). Only stores content for files passing `isMergeEligible()` — i.e., text extensions (`.md`, `.txt`, `.json`, `.canvas`, etc.) and ≤ 1 MB in size. Also stores `LocalFileSnapshot` under the special key `__localSnapshot`
 
-**Methods**: `open()`, `close()`, `get(path)`, `getAll()`, `put(record)`, `delete(path)`, `clear()`, `putContent(path, content)`, `getContent(path)`
+**Methods**: `open()`, `close()`, `get(path)`, `getAll()`, `getMany(paths)`, `put(record)`, `delete(path)`, `clear()`, `putContent(path, content)`, `getContent(path)`, `saveLocalSnapshot(snapshot)`, `loadLocalSnapshot()`
+
+**Delta sync methods**:
+- `getMany(paths)` — Batch lookup of `SyncRecord`s by path in a single IDB transaction. More efficient than `getAll()` when processing a small delta (O(delta) vs O(n))
+- `saveLocalSnapshot(snapshot)` / `loadLocalSnapshot()` — Persists/loads a `LocalFileSnapshot` (compact `path → { mtime, size }` mapping) for startup change detection. Stored as a single record in the content store (~400KB for 10K files)
 
 Both `SyncStateStore` and `MetadataStore<T>` delegate IndexedDB lifecycle (open/close idempotency, `onversionchange` recovery, transaction wrapping) to `IDBHelper` (`store/idb-helper.ts`) via composition. Each store passes its schema-specific `onUpgrade` callback and uses `helper.runTransaction()` for all reads and writes. `MetadataStore<T>` is backend-agnostic — Google Drive instantiates it as `MetadataStore<DriveFile>`, and future backends (Dropbox, S3, etc.) can reuse the same store with their own file metadata type.
 
 DB version 3. The v2→v3 upgrade (`size` → `localSize`/`remoteSize` in `SyncRecord`) is a breaking schema change — `onupgradeneeded` drops and recreates all object stores, clearing existing sync state.
+
+---
+
+## Incremental sync (change-driven sync)
+
+Optimizes the common case (few or no changes) from O(n) to O(delta) by detecting changes first, then processing only changed paths.
+
+### Problem
+
+The original sync flow loads all remote cache entries + all SyncRecords from IndexedDB on every sync (~200-400ms for 10K files), even when nothing has changed.
+
+### Design
+
+```
+executeSyncOnce():
+  // Phase 1: Change detection (low cost)
+  localDelta  = LocalChangeDetector.consume()      // snapshot diff or vault events
+  remoteDelta = GoogleDriveFs.getRemoteChangedPaths()  // folder hierarchy + changes.list API
+
+  changedPaths = localDelta ∪ remoteDelta
+
+  if changedPaths is empty:
+    return "up to date"          // No IDB full reads, instant return
+
+  if changedPaths.size > 500 or delta unreliable:
+    return fullReconciliation()  // Fallback to full scan
+
+  // Phase 2: Process only changed paths (O(delta))
+  entities = buildChangedEntities(changedPaths, ...)
+  decisions = computeDecisions(entities)
+  executor.execute(decisions)
+
+  // Phase 3: State update
+  commitDeltaToken() + saveSnapshot()
+```
+
+### LocalChangeDetector (`sync/local-change-detector.ts`)
+
+Detects local file changes via two modes:
+
+**Startup mode**: Loads saved `LocalFileSnapshot` from IndexedDB and diffs against current vault state (`vault.getAllLoadedFiles()`). Detects new, modified (mtime/size change), and deleted files. Cost: ~10ms (snapshot load ~5ms + vault diff ~5ms).
+
+**Runtime mode**: Tracks vault events (`create`, `modify`, `delete`, `rename`) in a `Set<string>`. Events are wired from `main.ts` vault listeners.
+
+`consume()` returns the accumulated changed paths and resets. Returns `null` if no snapshot baseline exists (forces full scan). After sync, `saveSnapshot()` persists the current vault state for the next startup.
+
+### Remote change detection
+
+**Lightweight mode** (`applyIncrementalChangesLightweight` in `incremental-sync.ts`): Used by `getRemoteChangedPaths()`. Loads only the folder hierarchy (~100 records) instead of the full metadata cache (~10K records). Resolves file paths via `resolvePathFromHierarchy()` (parent ID chain traversal). Falls back to full scan on deletions (can't resolve deleted paths without full cache). Returns changed paths, `FileEntity` objects, and raw `DriveFile` objects.
+
+**Full mode** (`applyIncrementalChanges`): Used during full sync. Operates on the full metadata cache. Updates cache entries in-place and persists changes to IndexedDB.
+
+Both modes share pagination logic (`fetchAllChanges`) and change sorting (`sortChanges` — folders first, shallow before deep) extracted as shared helpers.
+
+### Token management
+
+The `changesPageToken` (Drive's `changes.list` cursor) is advanced only after successful sync execution:
+1. `getRemoteChangedPaths()` fetches changes but does **not** advance the token
+2. Sync executes decisions
+3. On success, `commitDeltaToken(newToken)` advances the token and persists it
+4. On failure, the token remains at the previous position — next sync re-fetches the same changes
+
+This ensures no changes are lost if sync fails partway through.
+
+### Cost comparison
+
+| Scenario | Full sync | Delta sync |
+|----------|-----------|------------|
+| No changes | ~200-400ms (IDB full reads) | ~15-20ms (snapshot diff + folder hierarchy + API) |
+| 5 files changed | ~200-400ms | ~20-25ms + API latency |
+| Delta unreliable | ~200-400ms | ~210-410ms (snapshot diff overhead + full scan) |
+
+### Fallback conditions
+
+Delta sync falls back to full scan when:
+- No local snapshot exists (first sync after feature introduction)
+- Remote folder hierarchy is unavailable
+- `changesPageToken` is expired (HTTP 410) or invalid (HTTP 401)
+- Remote deletions are detected in lightweight mode (path resolution requires full cache)
+- Combined delta exceeds 500 paths (threshold where `getMany()` may be slower than `getAll()`)
 
 ---
 
@@ -685,7 +802,7 @@ Uses `this.registerInterval()` to run `runSync()` every N minutes. Interval is c
 
 ### Event-driven sync
 
-Monitors vault events (`create`, `modify`, `delete`, `rename`). Triggers sync with a 5-second trailing-edge debounce — waits until 5 seconds of inactivity after the last change before firing.
+Monitors vault events (`create`, `modify`, `delete`, `rename`). Each event is recorded by `LocalChangeDetector.trackChange()` / `trackRename()` for delta sync, then triggers sync with a 5-second trailing-edge debounce — waits until 5 seconds of inactivity after the last change before firing. Excluded paths are skipped from change tracking.
 
 ```typescript
 const debouncedSync = debounce(() => void this.runSync(), 5000, false);
@@ -836,13 +953,16 @@ When no `SyncRecord` exists for a file:
 - `src/fs/googledrive/client.test.ts` — DriveClient API calls
 - `src/fs/googledrive/types.test.ts` — Drive type validators
 - `src/fs/googledrive/remote-vault.test.ts` — Drive remote vault resolution
+- `src/fs/googledrive/incremental-sync.test.ts` — Incremental sync (full + lightweight modes)
 - `src/fs/backend-manager.test.ts` — BackendManager identity tracking, sync state clearing
+- `src/fs/local/dot-path-adapter.test.ts` — DotPathAdapter behavior
 - `src/store/idb-helper.test.ts` — IDBHelper lifecycle & transactions
 - `src/store/metadata-store.test.ts` — MetadataStore CRUD
 - `src/queue/async-queue.test.ts` — AsyncMutex exclusion, AsyncPool concurrency
 - `src/sync/engine.test.ts` — computeDecisions decision table tests
-- `src/sync/engine-build.test.ts` — buildMixedEntities integration tests
+- `src/sync/engine-build.test.ts` — buildMixedEntities + buildChangedEntities integration tests
 - `src/sync/conflict.test.ts` — All conflict resolution strategy patterns
+- `src/sync/conflict-history.test.ts` — Conflict history tracking
 - `src/sync/executor.test.ts` — SyncExecutor operations, parallel execution phases
 - `src/sync/merge.test.ts` — 3-way merge (clean merge, conflicts, eligibility)
 - `src/sync/service.test.ts` — SyncService orchestration
@@ -863,5 +983,6 @@ When no `SyncRecord` exists for a file:
 5. **TOCTOU races**: Delete propagation re-checks via `stat()`. Skips if the other side has changed
 6. **Network reconnect + auto-sync overlap**: When the browser comes back online just before an auto-sync timer fires, two sequential syncs may run. The `syncMutex` prevents concurrent execution, and `syncPending` deduplicates requests during an active sync. However, if the first sync completes before the second trigger fires, both execute independently. Impact is minimal — the second sync uses `changes.list` incremental fetch with no new changes
 7. **OAuth security**: The built-in flow's auth server (`auth-smartsync.takezo.dev`) is a confidential OAuth client that holds the client secret and performs token exchange. The server transiently sees tokens during exchange and refresh, but the `drive.file` scope limits access to plugin-created files only. The custom OAuth flow bypasses the auth server for token exchange — credentials and tokens stay between the plugin and Google, secured by PKCE (S256). The `state` parameter prevents CSRF attacks in both flows. Refresh tokens are stored only on the user's device
-8. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores the Drive MD5 as `contentChecksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads. The `contentChecksum` key is backend-agnostic (each backend maps its native checksum: Drive's `md5Checksum`, Dropbox's `content_hash`, S3's `ETag`)
+8. **Incremental sync consistency**: Delta sync relies on two independent change detection sources (local snapshot + remote `changes.list`). If either source is stale or incomplete, files may be missed. Mitigated by: (a) conservative fallback — any uncertainty triggers full scan, (b) folder hierarchy path resolution returns `null` for unknown folders → full scan fallback, (c) snapshot saved only after successful sync — interrupted syncs re-detect changes on next run, (d) remote deletions in lightweight mode force full scan (deleted paths can't be resolved without full cache)
+9. **Initial sync performance on large vaults**: `resolveEmptyHashes()` reads content and computes SHA-256 for all file pairs where both sides exist, no `prevSync` record exists, and sizes match. For a vault with N same-size pairs, this performs 2N file reads + 2N SHA-256 computations. Entities are processed **sequentially** (outer `for...of` loop); within each entity, the local and remote reads are parallelized via `Promise.all()` (max 2 concurrent reads). Size-mismatched pairs are skipped entirely (no I/O needed). This runs only on initial sync — after the first successful sync, `prevSync` records exist for all files and the function becomes a no-op. Future optimization: `GoogleDriveFs` already stores the Drive MD5 as `contentChecksum` in `backendMeta` during `list()`, which could be compared against a locally computed MD5 to skip remote downloads. The `contentChecksum` key is backend-agnostic (each backend maps its native checksum: Drive's `md5Checksum`, Dropbox's `content_hash`, S3's `ETag`)
 
