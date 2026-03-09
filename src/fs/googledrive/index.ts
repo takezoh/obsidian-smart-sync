@@ -385,6 +385,13 @@ export class GoogleDriveFs implements IFileSystem {
 				this.logger?.warn("Skipping stale cache update for delete", { path });
 			}
 		});
+
+		// Phase 4: persist deletion to MetadataStore (IDB) so the stale entry
+		// doesn't resurface after plugin reload when the changes token has
+		// already advanced past this trashing event.
+		if (this.metadataStore) {
+			void this.metadataStore.deleteFiles([path]);
+		}
 	}
 
 	async rename(oldPath: string, newPath: string): Promise<void> {
@@ -501,9 +508,12 @@ export class GoogleDriveFs implements IFileSystem {
 				void this.saveFolderHierarchy(hierarchy);
 			}
 
-			// Remove deleted files from MetadataStore
+			// Remove deleted files from MetadataStore (awaited to ensure consistency
+			// with the token commit — if deletion persists but token doesn't, the
+			// next cycle re-detects the deletion harmlessly; the reverse causes
+			// stale cache entries that can resurrect deleted files on full-scan fallback)
 			if (result.deletedPaths.length > 0 && this.metadataStore) {
-				void this.metadataStore.deleteFiles(result.deletedPaths);
+				await this.metadataStore.deleteFiles(result.deletedPaths);
 			}
 
 			// Store raw DriveFile objects so ensureInitialized() can pre-populate the cache
