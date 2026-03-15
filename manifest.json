@@ -1,7 +1,7 @@
 {
 	"id": "smart-sync",
 	"name": "Smart Sync",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"minAppVersion": "1.11.4",
 	"description": "Sync your vault bidirectionally with Google Drive.",
 	"author": "Takehito Gondo",
