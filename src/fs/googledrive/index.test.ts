@@ -92,10 +92,7 @@ describe("GoogleDriveFs.write contentChecksum", () => {
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const fs = new GoogleDriveFs(client, "root");
 
 		(fs as unknown as GoogleDriveFsInternal).initialized = true;
@@ -126,10 +123,7 @@ describe("GoogleDriveFs.write contentChecksum", () => {
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const fs = new GoogleDriveFs(client, "root");
 
 		(fs as unknown as GoogleDriveFsInternal).initialized = true;

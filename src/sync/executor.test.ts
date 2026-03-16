@@ -4,6 +4,7 @@ import type { FileEntity } from "../fs/types";
 import type { SyncDecision, SyncRecord } from "./types";
 import type { SyncStateStore } from "./state";
 import { createMockFs, createMockStateStore, makeFile } from "../__mocks__/sync-test-helpers";
+import { AuthError } from "../fs/errors";
 
 describe("SyncExecutor", () => {
 	let localFs: ReturnType<typeof createMockFs>;
@@ -782,14 +783,12 @@ describe("SyncExecutor — empty parent cleanup", () => {
 		expect(remoteFs.files.has("root.md")).toBe(false);
 	});
 
-	it("re-throws auth errors (status 400) instead of catching per-file", async () => {
+	it("re-throws auth errors (AuthError) instead of catching per-file", async () => {
 		const { entity, content } = makeFile("a.md", "hello");
 		localFs.files.set("a.md", { content, entity });
 
 		remoteFs.write = () => {
-			const err = new Error("Request failed, status 400");
-			(err as Error & { status: number }).status = 400;
-			throw err;
+			throw new AuthError("Authentication expired", 401);
 		};
 
 		const decisions: SyncDecision[] = [
@@ -797,7 +796,7 @@ describe("SyncExecutor — empty parent cleanup", () => {
 		];
 
 		const executor = createExecutor();
-		await expect(executor.execute(decisions)).rejects.toThrow("status 400");
+		await expect(executor.execute(decisions)).rejects.toThrow("Authentication expired");
 	});
 
 	it("catches non-auth errors into result.errors", async () => {

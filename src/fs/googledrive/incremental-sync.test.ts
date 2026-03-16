@@ -89,17 +89,14 @@ describe("applyIncrementalChanges", () => {
 		);
 	});
 
-	it("falls back to full scan on 401 (unauthorized/invalid page token)", async () => {
+	it("re-throws 401 as auth error (no fallback to full scan)", async () => {
 		const error = new Error("Unauthorized");
 		Object.assign(error, { status: 401 });
 
 		listChanges.mockRejectedValue(error);
 
-		const result = await applyIncrementalChanges(ctx, "invalid-token");
-
-		expect(result).toEqual({ needsFullScan: true });
-		expect(loggerWarn).toHaveBeenCalledWith(
-			"listChanges returned 401 — page token may be invalid, falling back to full scan"
+		await expect(applyIncrementalChanges(ctx, "invalid-token")).rejects.toThrow(
+			"Unauthorized"
 		);
 	});
 

@@ -94,11 +94,6 @@ export async function applyIncrementalChanges(
 			ctx.logger?.info("Changes token expired (410), falling back to full scan");
 			return { needsFullScan: true };
 		}
-		if (isHttpError(err, 401)) {
-			// Page token may be invalid, fall back to full scan
-			ctx.logger?.warn("listChanges returned 401 — page token may be invalid, falling back to full scan");
-			return { needsFullScan: true };
-		}
 		throw err;
 	}
 }

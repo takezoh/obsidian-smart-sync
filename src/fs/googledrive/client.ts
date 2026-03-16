@@ -1,5 +1,5 @@
 import { requestUrl } from "obsidian";
-import type { IGoogleAuth } from "./auth";
+import type { RequestUrlParam } from "obsidian";
 import type { Logger } from "../../logging/logger";
 import type { DriveFile, DriveFileList, DriveChangeList } from "./types";
 import {
@@ -22,27 +22,31 @@ const FILE_FIELDS = "id,name,mimeType,size,modifiedTime,parents,md5Checksum";
  * Uses Obsidian's requestUrl for CORS-free requests.
  */
 export class DriveClient {
-	private auth: IGoogleAuth;
+	private getToken: () => Promise<string>;
 	private logger?: Logger;
 	private resumableUploader: ResumableUploader;
 
-	constructor(auth: IGoogleAuth, logger?: Logger) {
-		this.auth = auth;
+	constructor(getToken: () => Promise<string>, logger?: Logger) {
+		this.getToken = getToken;
 		this.logger = logger;
 		this.resumableUploader = new ResumableUploader({
-			auth,
+			getToken,
 			request: (operation, opts) => this.request(operation, opts),
 			logger,
 		});
 	}
 
-	/** Wrap requestUrl with operation-name context and preserve status/headers for retry logic */
+	/** Wrap requestUrl with operation-name context, inject auth header, and preserve status/headers for retry logic */
 	private async request(
 		operation: string,
-		opts: Parameters<typeof requestUrl>[0]
-	): Promise<ReturnType<typeof requestUrl>> {
+		opts: RequestUrlParam
+	): Promise<Awaited<ReturnType<typeof requestUrl>>> {
+		const token = await this.getToken();
 		try {
-			return await requestUrl(opts);
+			return await requestUrl({
+				...opts,
+				headers: { ...opts.headers, Authorization: `Bearer ${token}` },
+			});
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			const status = err && typeof err === "object" && "status" in err ? (err as Record<string, unknown>).status : undefined;
@@ -67,7 +71,6 @@ export class DriveClient {
 		name: string,
 		mimeType?: string
 	): Promise<DriveFile | null> {
-		const token = await this.auth.getAccessToken();
 		const escapedParent = parentId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 		const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 		let q = `'${escapedParent}' in parents and name = '${escapedName}' and trashed = false`;
@@ -81,7 +84,6 @@ export class DriveClient {
 		});
 		const response = await this.request("findChildByName", {
 			url: `${DRIVE_API}/files?${params.toString()}`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		const result: unknown = response.json;
 		assertDriveFileList(result);
@@ -90,11 +92,9 @@ export class DriveClient {
 
 	/** Get a file's metadata by ID */
 	async getFile(fileId: string): Promise<DriveFile> {
-		const token = await this.auth.getAccessToken();
 		const params = new URLSearchParams({ fields: FILE_FIELDS });
 		const response = await this.request("getFile", {
 			url: `${DRIVE_API}/files/${fileId}?${params.toString()}`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		const result: unknown = response.json;
 		assertDriveFile(result);
@@ -106,7 +106,6 @@ export class DriveClient {
 		folderId: string,
 		pageToken?: string
 	): Promise<DriveFileList> {
-		const token = await this.auth.getAccessToken();
 		const escapedId = folderId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 		const params = new URLSearchParams({
 			q: `'${escapedId}' in parents and trashed = false`,
@@ -119,7 +118,6 @@ export class DriveClient {
 
 		const response = await this.request("listFiles", {
 			url: `${DRIVE_API}/files?${params.toString()}`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		const result: unknown = response.json;
 		assertDriveFileList(result);
@@ -161,10 +159,8 @@ export class DriveClient {
 
 	/** Download file content */
 	async downloadFile(fileId: string): Promise<ArrayBuffer> {
-		const token = await this.auth.getAccessToken();
 		const response = await this.request("downloadFile", {
 			url: `${DRIVE_API}/files/${fileId}?alt=media`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		return response.arrayBuffer;
 	}
@@ -189,7 +185,6 @@ export class DriveClient {
 			);
 		}
 
-		const token = await this.auth.getAccessToken();
 		const metadata = buildUploadMetadata(name, parentId, modifiedTime, existingFileId);
 
 		// Use multipart upload
@@ -218,7 +213,6 @@ export class DriveClient {
 			url,
 			method,
 			headers: {
-				Authorization: `Bearer ${token}`,
 				"Content-Type": `multipart/related; boundary=${boundary}`,
 			},
 			body: body.buffer,
@@ -236,12 +230,10 @@ export class DriveClient {
 
 	/** Create a folder */
 	async createFolder(name: string, parentId: string): Promise<DriveFile> {
-		const token = await this.auth.getAccessToken();
 		const response = await this.request("createFolder", {
 			url: `${DRIVE_API}/files?fields=${FILE_FIELDS}`,
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${token}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
@@ -262,7 +254,6 @@ export class DriveClient {
 		addParents?: string,
 		removeParents?: string
 	): Promise<DriveFile> {
-		const token = await this.auth.getAccessToken();
 		const params = new URLSearchParams({ fields: FILE_FIELDS });
 		if (addParents) params.set("addParents", addParents);
 		if (removeParents) params.set("removeParents", removeParents);
@@ -271,7 +262,6 @@ export class DriveClient {
 			url: `${DRIVE_API}/files/${fileId}?${params.toString()}`,
 			method: "PATCH",
 			headers: {
-				Authorization: `Bearer ${token}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(metadata),
@@ -283,19 +273,16 @@ export class DriveClient {
 
 	/** Delete a file or folder (trash or permanent) */
 	async deleteFile(fileId: string, permanent = false): Promise<void> {
-		const token = await this.auth.getAccessToken();
 		if (permanent) {
 			await this.request("deleteFile", {
 				url: `${DRIVE_API}/files/${fileId}`,
 				method: "DELETE",
-				headers: { Authorization: `Bearer ${token}` },
 			});
 		} else {
 			await this.request("trashFile", {
 				url: `${DRIVE_API}/files/${fileId}`,
 				method: "PATCH",
 				headers: {
-					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ trashed: true }),
@@ -305,10 +292,8 @@ export class DriveClient {
 
 	/** Get the start page token for changes.list */
 	async getChangesStartToken(): Promise<string> {
-		const token = await this.auth.getAccessToken();
 		const response = await this.request("getChangesStartToken", {
 			url: `${DRIVE_API}/changes/startPageToken`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		const result: unknown = response.json;
 		assertStartPageTokenResponse(result);
@@ -320,7 +305,6 @@ export class DriveClient {
 		startPageToken: string,
 		pageToken?: string
 	): Promise<DriveChangeList> {
-		const token = await this.auth.getAccessToken();
 		const params = new URLSearchParams({
 			pageToken: pageToken ?? startPageToken,
 			fields:
@@ -330,7 +314,6 @@ export class DriveClient {
 
 		const response = await this.request("listChanges", {
 			url: `${DRIVE_API}/changes?${params.toString()}`,
-			headers: { Authorization: `Bearer ${token}` },
 		});
 		const result: unknown = response.json;
 		assertDriveChangeList(result);

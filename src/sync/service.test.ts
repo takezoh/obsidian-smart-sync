@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import type { SmartSyncSettings } from "../settings";
 import { SyncService, SyncServiceDeps, getErrorInfo, isRateLimitError } from "./service";
 import { createMockFs, addFile } from "../__mocks__/sync-test-helpers";
+import { AuthError } from "../fs/errors";
 
 function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSettings {
 	return {
@@ -132,7 +133,7 @@ describe("SyncService — per-file errors do not trigger retry", () => {
 });
 
 describe("SyncService — auth error aborts with reconnect notification", () => {
-	it("shows reconnect message when executor throws status 400", async () => {
+	it("shows reconnect message when executor throws AuthError", async () => {
 		const localFs = createMockFs("local");
 		const remoteFs = createMockFs("remote");
 
@@ -149,9 +150,7 @@ describe("SyncService — auth error aborts with reconnect notification", () => 
 		});
 
 		remoteFs.write = () => {
-			const err = new Error("Request failed, status 400");
-			(err as Error & { status: number }).status = 400;
-			throw err;
+			throw new AuthError("Authentication expired", 401);
 		};
 
 		const deps = createMockDeps({
@@ -164,7 +163,7 @@ describe("SyncService — auth error aborts with reconnect notification", () => 
 
 		expect(deps.onStatusChange).toHaveBeenCalledWith("error");
 		expect(deps.notify).toHaveBeenCalledWith(
-			"Authentication expired. Please reconnect in settings."
+			"Authentication error. Please reconnect in settings."
 		);
 		await service.close();
 	});

@@ -10,6 +10,7 @@ import { buildMixedEntities, computeDecisions } from "./engine";
 import { SyncExecutor, SyncProgress, SyncResult } from "./executor";
 import type { Logger } from "../logging/logger";
 import { getErrorInfo, isRateLimitError, sleep } from "./error";
+import { AuthError } from "../fs/errors";
 import { ConflictHistory } from "./conflict-history";
 
 export type { ErrorInfo } from "./error";
@@ -117,7 +118,7 @@ export class SyncService {
 						);
 
 						// Non-retryable errors: abort immediately
-						if (status === 401) {
+						if (err instanceof AuthError) {
 							this.deps.onStatusChange("error");
 							this.deps.notify(
 								"Authentication error. Please reconnect in settings."
@@ -127,14 +128,7 @@ export class SyncService {
 						if (status === 403 && !isRateLimitError(err)) {
 							this.deps.onStatusChange("error");
 							this.deps.notify(
-								"Authentication error. Please reconnect in settings."
-							);
-							return;
-						}
-						if (status === 400) {
-							this.deps.onStatusChange("error");
-							this.deps.notify(
-								"Authentication expired. Please reconnect in settings."
+								"Permission denied. Please check your Google Drive permissions."
 							);
 							return;
 						}

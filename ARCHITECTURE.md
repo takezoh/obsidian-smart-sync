@@ -20,6 +20,7 @@ src/
 │   ├── auth.ts                     # IAuthProvider interface
 │   ├── backend.ts                  # IBackendProvider interface
 │   ├── registry.ts                 # Backend registry (getBackendProvider, getAllBackendProviders)
+│   ├── errors.ts                   # AuthError — typed authentication error
 │   ├── backend-manager.ts          # BackendManager — backend initialization, auth flow, lifecycle
 │   ├── local/
 │   │   ├── index.ts                # LocalFs — Obsidian Vault API wrapper
@@ -397,7 +398,7 @@ Receives a list of `SyncDecision`s and executes the corresponding IFileSystem op
 
 Each decision operates on a unique path (at most one decision per path per sync), so Phase A tasks never contend on the same file. `SyncResult` counter mutations (`result.pushed++`) are safe because JavaScript is single-threaded — only I/O is concurrent, not computation.
 
-**Per-file errors**: `executeOne()` is wrapped in try/catch. On error, SyncRecord is **not** updated — the file remains in its pre-sync state and will be re-evaluated on the next sync cycle.
+**Per-file errors**: `executeOne()` is wrapped in try/catch. `AuthError` is re-thrown immediately (aborting the entire sync), while other errors are caught per-file — SyncRecord is **not** updated, so the file remains in its pre-sync state and will be re-evaluated on the next sync cycle.
 
 **Result tracking**: Counts for `pushed`, `pulled`, `conflicts` + `mergeConflictPaths` (files with inserted markers) + `errors` (failed paths)
 
@@ -414,8 +415,9 @@ Orchestrates the entire sync flow.
 7. Send result notifications
 
 **Retry**: Max 3 attempts for transport-level errors (network failures, 5xx). Exponential backoff (`2^n * 1000ms`) ± 50% jitter. Immediate abort for:
-- 401/403: Auth error
-- 400/404: Data error
+- `AuthError`: Auth error (thrown by `getAccessToken()` when refresh fails)
+- 403 (non-rate-limit): Permission error
+- 404: Data error
 - 429: Respects `Retry-After` header
 
 Per-file errors (e.g., individual read/write failures) do not trigger retry. They are reported via notification and `partial_error` status.
@@ -458,7 +460,7 @@ Two OAuth 2.0 implementations sharing a common base class (`GoogleAuthBase`):
 
 ### DriveClient (`fs/googledrive/client.ts`)
 
-Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
+Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS. Accepts a `getToken: () => Promise<string>` function (not the full `IGoogleAuth`) — authentication is injected once in the private `request()` method, which adds the `Authorization: Bearer` header to all outgoing requests. Individual API methods contain no auth logic.
 
 | Method | Description |
 |--------|-------------|
@@ -485,7 +487,7 @@ Google Drive REST API v3 client. Uses Obsidian's `requestUrl()` to bypass CORS.
 - First `list()` call tries to load from IndexedDB (`MetadataStore<DriveFile>`); falls back to full scan via `listAllFiles()` if no cache or `rootFolderId` changed
 - After full scan, the cache is persisted to IndexedDB for faster reload
 - Subsequent calls use `changes.list` API for incremental updates (also persisted incrementally)
-- Falls back to full scan on HTTP 410 (expired token)
+- Falls back to full scan on HTTP 410 (expired changes page token). Auth errors (401) propagate to `SyncService` for abort instead of falling back
 
 **Mutex-protected cache**:
 - `cacheMutex` protects cache reads and writes
@@ -502,7 +504,7 @@ Abstract base classes shared by the built-in and custom OAuth providers. Subclas
 - 3 abstract methods for subclasses: `createAuth()`, `createAuthIfNeeded()`, `getOrCreateGoogleAuth()`
 
 **GoogleDriveProviderBase** (`IBackendProvider`):
-- `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(data)` to obtain an `IGoogleAuth` instance, then creates `DriveClient` → `GoogleDriveFs`
+- `createFs()`: Calls `this.auth.getOrCreateGoogleAuth(data)` to obtain an `IGoogleAuth` instance, then creates `DriveClient` (passing `() => googleAuth.getAccessToken()` as the token provider) → `GoogleDriveFs`
 - `getIdentity()`: Returns `<type>:<driveFolderId>` (or `null` if not configured)
 - `resetTargetState()`: Clears stale `changesStartPageToken` from `backendData` when the user switches Drive folders
 - `readBackendState()`: Read `changesStartPageToken` + refreshed tokens and return as opaque record
@@ -721,16 +723,24 @@ Shows progress text during sync (e.g., "Syncing 3/15...").
 
 ## Error handling & retry
 
+### AuthError (`fs/errors.ts`)
+
+Typed error class for authentication failures. Thrown by `GoogleAuthBase.getAccessToken()` (not authenticated, token expired, refresh failed with 400/401). Carries an HTTP `status` code and is checked via `instanceof AuthError` — replacing duck-typing (`(err as {status?: number}).status === 401`) scattered across 4 files.
+
+### SyncService error handling
+
 `SyncService` handles errors centrally:
 
-| HTTP Status | Response |
+| Error type | Response |
 |-------------|----------|
-| 401 | Auth error → abort immediately, show reconnect Notice |
-| 403 (non-rate-limit) | Auth error → abort immediately, show reconnect Notice |
+| `AuthError` | Auth error → abort immediately, show reconnect Notice |
+| 403 (non-rate-limit) | Permission error → abort immediately, show permission Notice |
 | 403 (rate limit) | `isRateLimitError()` checks the response JSON for `reason ∈ {rateLimitExceeded, userRateLimitExceeded, dailyLimitExceeded}` → treated like 429, retries with backoff |
-| 400 / 404 | Data error → abort immediately |
+| 404 | Data error → abort immediately |
 | 429 | Rate limit → wait per `Retry-After` header (supports both delay-seconds and HTTP-date formats) |
 | Other | Exponential backoff (`2^n * 1000ms` ± 50% jitter), max 3 retries |
+
+`SyncExecutor` re-throws `AuthError` from per-file operations (bypassing per-file error handling) so it propagates to `SyncService` for immediate abort. `BackendManager.initBackend()` also catches `AuthError` to show a reconnect notification.
 
 ---
 

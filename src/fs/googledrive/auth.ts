@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { Logger } from "../../logging/logger";
 import { assertTokenResponse } from "./types";
+import { AuthError } from "../errors";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -75,10 +76,10 @@ abstract class GoogleAuthBase implements IGoogleAuth {
 
 	async getAccessToken(): Promise<string> {
 		if (!this.refreshToken) {
-			throw new Error("Not authenticated. Please connect to Google Drive first.");
+			throw new AuthError("Not authenticated. Please connect to Google Drive first.", 401);
 		}
 		if (this.authFailed) {
-			throw new Error("Authentication expired. Please reconnect in settings.");
+			throw new AuthError("Authentication expired. Please reconnect in settings.", 401);
 		}
 		if (this.accessToken && Date.now() < this.accessTokenExpiry - 60_000) {
 			return this.accessToken;
@@ -231,6 +232,9 @@ export class GoogleAuth extends GoogleAuthBase {
 			}
 			const msg = err instanceof Error ? err.message : String(err);
 			this.logger?.error("Token refresh failed", { error: msg });
+			if (status === 400 || status === 401) {
+				throw new AuthError(`Token refresh failed: ${msg}`, status);
+			}
 			throw err;
 		}
 	}
@@ -337,6 +341,9 @@ export class GoogleAuthDirect extends GoogleAuthBase {
 			}
 			const msg = err instanceof Error ? err.message : String(err);
 			this.logger?.error("Token refresh failed", { error: msg });
+			if (status === 400 || status === 401) {
+				throw new AuthError(`Token refresh failed: ${msg}`, status);
+			}
 			throw err;
 		}
 	}

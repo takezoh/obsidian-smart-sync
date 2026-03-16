@@ -1,5 +1,4 @@
-import { requestUrl } from "obsidian";
-import type { IGoogleAuth } from "./auth";
+import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import type { Logger } from "../../logging/logger";
 import type { DriveFile } from "./types";
 import { assertDriveFile, buildUploadMetadata } from "./types";
@@ -17,11 +16,11 @@ interface ResumeCacheEntry {
 
 /** Dependencies injected by DriveClient */
 export interface ResumableUploadDeps {
-	auth: IGoogleAuth;
+	getToken: () => Promise<string>;
 	request: (
 		operation: string,
-		opts: Parameters<typeof requestUrl>[0]
-	) => Promise<ReturnType<typeof requestUrl>>;
+		opts: RequestUrlParam
+	) => Promise<RequestUrlResponse>;
 	logger?: Logger;
 }
 
@@ -66,7 +65,7 @@ export class ResumableUploader {
 			// Fall through to fresh upload if resume failed
 		}
 
-		const token = await this.deps.auth.getAccessToken();
+		const token = await this.deps.getToken();
 		const metadata = buildUploadMetadata(name, parentId, modifiedTime, existingFileId);
 
 		// Initiate resumable upload

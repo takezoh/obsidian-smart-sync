@@ -4,6 +4,7 @@ import type { IBackendProvider } from "./backend";
 import type { SmartSyncSettings } from "../settings";
 import type { IFileSystem } from "./interface";
 import type { Logger } from "../logging/logger";
+import { AuthError } from "./errors";
 
 // Mock the registry to return our fake provider
 vi.mock("./registry", () => ({
@@ -162,11 +163,9 @@ describe("BackendManager — identity change triggers onIdentityChanged", () => 
 });
 
 describe("BackendManager — auth error notification on initBackend", () => {
-	it("notifies user when initBackend fails with status 400", async () => {
+	it("notifies user when initBackend fails with AuthError", async () => {
 		fakeProvider.resolveRemoteVault = () => {
-			const err = new Error("Request failed, status 400");
-			(err as Error & { status: number }).status = 400;
-			throw err;
+			throw new AuthError("Token refresh failed", 400);
 		};
 
 		const settings = mockSettings();
