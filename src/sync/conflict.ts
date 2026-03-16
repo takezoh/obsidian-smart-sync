@@ -282,7 +282,11 @@ async function attemptThreeWayMerge(
 	};
 }
 
-/** Build sync record from current file state on both sides */
+/**
+ * Build sync record from current file state on both sides.
+ * TODO: This async variant (used by the v1 conflict pipeline) should be consolidated with
+ * the synchronous `buildSyncRecord` in state-committer.ts once the v2 pipeline is complete.
+ */
 export async function buildSyncRecord(
 	ctx: Pick<ConflictContext, "path" | "localFs" | "remoteFs" | "stateStore" | "logger">,
 	storeContent?: boolean,
