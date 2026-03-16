@@ -525,3 +525,105 @@ describe("GoogleDriveFs cache persistence", () => {
 		await store.close();
 	});
 });
+
+describe("GoogleDriveFs.getChangedPaths", () => {
+	it("returns modified and deleted paths on successful incremental changes", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const mockClient = {
+			listAllFiles: vi.fn().mockResolvedValue([
+				{ id: "f1", name: "notes", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+				{ id: "file1", name: "keep.md", mimeType: "text/plain", parents: ["f1"] },
+				{ id: "file2", name: "remove.md", mimeType: "text/plain", parents: ["f1"] },
+			]),
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockResolvedValue({
+				changes: [
+					// file1 (keep.md) is modified
+					{
+						type: "file",
+						fileId: "file1",
+						removed: false,
+						file: { id: "file1", name: "keep.md", mimeType: "text/plain", parents: ["f1"], modifiedTime: "2024-06-01T00:00:00.000Z" },
+					},
+					// file2 (remove.md) is deleted
+					{ type: "file", fileId: "file2", removed: true },
+				],
+				newStartPageToken: "token2",
+			}),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		await fs.list();
+
+		const result = await fs.getChangedPaths();
+
+		expect(result).not.toBeNull();
+		expect(result!.modified).toContain("notes/keep.md");
+		expect(result!.deleted).toContain("notes/remove.md");
+	});
+
+	it("returns null when not initialized (triggers full scan)", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const listAllFiles = vi.fn().mockResolvedValue([
+			{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
+		]);
+		const mockClient = {
+			listAllFiles,
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		// Do NOT call list() first — fs is not initialized
+
+		const result = await fs.getChangedPaths();
+
+		// null means a full scan was performed
+		expect(result).toBeNull();
+		// Full scan should have initialized the fs
+		expect(listAllFiles).toHaveBeenCalledOnce();
+	});
+
+	it("returns null on 410 fallback (token expired)", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const httpError = { status: 410, message: "Gone" };
+		const listAllFiles = vi.fn().mockResolvedValue([
+			{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
+		]);
+		const mockClient = {
+			listAllFiles,
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockRejectedValue(httpError),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		await fs.list();
+
+		const result = await fs.getChangedPaths();
+
+		// 410 triggers full scan, returns null
+		expect(result).toBeNull();
+		// A second full scan should have been triggered
+		expect(listAllFiles).toHaveBeenCalledTimes(2);
+	});
+
+	it("propagates auth errors from the Drive API", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const authError = { status: 401, message: "Unauthorized" };
+		const mockClient = {
+			listAllFiles: vi.fn().mockResolvedValue([
+				{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
+			]),
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockRejectedValue(authError),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		await fs.list();
+
+		await expect(fs.getChangedPaths()).rejects.toEqual(authError);
+	});
+});

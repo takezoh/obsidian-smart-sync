@@ -69,6 +69,7 @@ describe("applyIncrementalChanges", () => {
 		expect(result).toEqual({
 			newToken: "new-token-123",
 			needsFullScan: false,
+			changedPaths: new Set(["/test.txt"]),
 		});
 		expect(loggerInfo).toHaveBeenCalledWith("Incremental changes applied", {
 			changeCount: 1,
@@ -83,7 +84,7 @@ describe("applyIncrementalChanges", () => {
 
 		const result = await applyIncrementalChanges(ctx, "expired-token");
 
-		expect(result).toEqual({ needsFullScan: true });
+		expect(result).toEqual({ needsFullScan: true, changedPaths: new Set() });
 		expect(loggerInfo).toHaveBeenCalledWith(
 			"Changes token expired (410), falling back to full scan"
 		);

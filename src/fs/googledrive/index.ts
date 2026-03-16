@@ -142,20 +142,16 @@ export class GoogleDriveFs implements IFileSystem {
 		}
 	}
 
-	/**
-	 * Apply incremental changes from the Drive changes.list API.
-	 * Updates the internal metadata cache and returns the new page token.
-	 * Falls back to a full re-scan if the cache has been invalidated.
-	 */
-	async applyIncrementalChanges(): Promise<void> {
-		return this.cacheMutex.run(() => this._applyIncrementalChanges());
+	// Kept for backward compatibility; delegates to getChangedPaths().
+	async applyIncrementalChanges(): Promise<{ modified: string[]; deleted: string[] } | null> {
+		return this.getChangedPaths();
 	}
 
 	/** Internal implementation of applyIncrementalChanges (caller must hold mutex) */
-	private async _applyIncrementalChanges(): Promise<void> {
+	private async _applyIncrementalChanges(): Promise<{ modified: string[]; deleted: string[] } | null> {
 		if (!this.initialized || !this._changesPageToken) {
 			await this.fullScan();
-			return;
+			return null;
 		}
 
 		const result = await applyIncrementalChanges(
@@ -171,9 +167,34 @@ export class GoogleDriveFs implements IFileSystem {
 		if (result.needsFullScan) {
 			this.initialized = false;
 			await this.fullScan();
-		} else {
-			this._changesPageToken = result.newToken;
+			return null;
 		}
+
+		this._changesPageToken = result.newToken;
+
+		const modified: string[] = [];
+		const deleted: string[] = [];
+		for (const path of result.changedPaths) {
+			// Note: removeTree() was already called during applyIncrementalChanges(), so
+			// deleted paths will correctly be absent from cache here. Edge case: if a path
+			// was removed as a descendant of a deleted folder, but a new file with the same
+			// path was added in the same batch, it would be misclassified as modified.
+			// This is unlikely in practice and does not cause data loss.
+			if (this.cache.hasFile(path)) {
+				modified.push(path);
+			} else {
+				deleted.push(path);
+			}
+		}
+		return { modified, deleted };
+	}
+
+	/**
+	 * Return paths changed since the last sync by applying incremental changes.
+	 * Should be called before list(). Returns null if a full scan was needed.
+	 */
+	async getChangedPaths(): Promise<{ modified: string[]; deleted: string[] } | null> {
+		return this.cacheMutex.run(() => this._applyIncrementalChanges());
 	}
 
 	async list(): Promise<FileEntity[]> {

@@ -89,6 +89,13 @@ export interface IFileSystem {
 	rename(oldPath: string, newPath: string): Promise<void>;
 
 	/**
+	 * Return paths changed since the last sync, or null if unavailable.
+	 * Should be called before list() to allow the change-detector to skip
+	 * unchanged paths. Returns modified and deleted path lists.
+	 */
+	getChangedPaths?(): Promise<{ modified: string[]; deleted: string[] } | null>;
+
+	/**
 	 * Release resources (e.g. close IndexedDB connections).
 	 * Called on plugin unload. Optional — not all backends need cleanup.
 	 */
