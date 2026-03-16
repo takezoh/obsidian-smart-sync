@@ -786,7 +786,7 @@ describe("SyncExecutor — empty parent cleanup", () => {
 		const { entity, content } = makeFile("a.md", "hello");
 		localFs.files.set("a.md", { content, entity });
 
-		remoteFs.write = async () => {
+		remoteFs.write = () => {
 			const err = new Error("Request failed, status 400");
 			(err as Error & { status: number }).status = 400;
 			throw err;
@@ -804,7 +804,7 @@ describe("SyncExecutor — empty parent cleanup", () => {
 		const { entity, content } = makeFile("a.md", "hello");
 		localFs.files.set("a.md", { content, entity });
 
-		remoteFs.write = async () => {
+		remoteFs.write = () => {
 			const err = new Error("Network timeout");
 			(err as Error & { status: number }).status = 503;
 			throw err;

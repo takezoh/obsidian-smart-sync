@@ -163,7 +163,7 @@ describe("BackendManager — identity change triggers onIdentityChanged", () => 
 
 describe("BackendManager — auth error notification on initBackend", () => {
 	it("notifies user when initBackend fails with status 400", async () => {
-		fakeProvider.resolveRemoteVault = async () => {
+		fakeProvider.resolveRemoteVault = () => {
 			const err = new Error("Request failed, status 400");
 			(err as Error & { status: number }).status = 400;
 			throw err;
@@ -181,7 +181,7 @@ describe("BackendManager — auth error notification on initBackend", () => {
 	});
 
 	it("does not notify for non-auth errors", async () => {
-		fakeProvider.resolveRemoteVault = async () => {
+		fakeProvider.resolveRemoteVault = () => {
 			const err = new Error("Network error");
 			(err as Error & { status: number }).status = 503;
 			throw err;

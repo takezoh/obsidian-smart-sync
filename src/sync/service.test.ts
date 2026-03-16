@@ -148,7 +148,7 @@ describe("SyncService — auth error aborts with reconnect notification", () => 
 			entity: badEntity,
 		});
 
-		remoteFs.write = async () => {
+		remoteFs.write = () => {
 			const err = new Error("Request failed, status 400");
 			(err as Error & { status: number }).status = 400;
 			throw err;

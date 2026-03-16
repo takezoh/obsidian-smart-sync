@@ -128,7 +128,7 @@ describe("GoogleAuth.getAccessToken concurrency", () => {
 	it("short-circuits after refresh failure with status 400", async () => {
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
-			async () => {
+			() => {
 				callCount++;
 				const err = new Error("Request failed, status 400");
 				(err as Error & { status: number }).status = 400;
@@ -161,11 +161,11 @@ describe("GoogleAuth.getAccessToken concurrency", () => {
 					(err as Error & { status: number }).status = 400;
 					throw err;
 				}
-				return mockRes({
+				return await Promise.resolve(mockRes({
 					access_token: "recovered",
 					expires_in: 3600,
 					token_type: "Bearer",
-				});
+				}));
 			}
 		);
 
