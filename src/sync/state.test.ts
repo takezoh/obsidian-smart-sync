@@ -44,6 +44,35 @@ describe("SyncStateStore", () => {
 		expect(result).toBeUndefined();
 	});
 
+	it("getMany: returns records for existing paths", async () => {
+		await store.put(makeRecord("a.md"));
+		await store.put(makeRecord("b.md"));
+		await store.put(makeRecord("c.md"));
+
+		const result = await store.getMany(["a.md", "c.md"]);
+		expect(result.size).toBe(2);
+		expect(result.get("a.md")).toEqual(makeRecord("a.md"));
+		expect(result.get("c.md")).toEqual(makeRecord("c.md"));
+	});
+
+	it("getMany: omits nonexistent paths", async () => {
+		await store.put(makeRecord("a.md"));
+
+		const result = await store.getMany(["a.md", "missing.md"]);
+		expect(result.size).toBe(1);
+		expect(result.has("missing.md")).toBe(false);
+	});
+
+	it("getMany: returns empty map for empty input", async () => {
+		const result = await store.getMany([]);
+		expect(result.size).toBe(0);
+	});
+
+	it("getMany: returns empty map when no records exist", async () => {
+		const result = await store.getMany(["a.md", "b.md"]);
+		expect(result.size).toBe(0);
+	});
+
 	it("getAll: returns all stored records", async () => {
 		await store.put(makeRecord("a.md"));
 		await store.put(makeRecord("b.md"));

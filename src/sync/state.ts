@@ -47,6 +47,24 @@ export class SyncStateStore {
 		});
 	}
 
+	/** Get multiple sync records by paths, returning only found entries */
+	async getMany(paths: string[]): Promise<Map<string, SyncRecord>> {
+		return this.helper.runTransaction(STORE_NAME, "readonly", (tx) => {
+			const store = tx.objectStore(STORE_NAME);
+			const reqs = paths.map((p) => ({ path: p, req: store.get(p) }));
+			return () => {
+				const result = new Map<string, SyncRecord>();
+				for (const { path, req } of reqs) {
+					const record = req.result as SyncRecord | undefined;
+					if (record !== undefined) {
+						result.set(path, record);
+					}
+				}
+				return result;
+			};
+		});
+	}
+
 	/** Get all sync records (without prevSyncContent for lightweight listing) */
 	async getAll(): Promise<SyncRecord[]> {
 		return this.helper.runTransaction(STORE_NAME, "readonly", (tx) => {
