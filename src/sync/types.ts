@@ -99,8 +99,10 @@ export interface SyncAction {
 
 /** v2 pipeline: result of safety checks before execution */
 export interface SafetyCheckResult {
-	safe: boolean;
-	reasons: string[];
+	shouldAbort: boolean;
+	requiresConfirmation: boolean;
+	deletionRatio?: number;
+	deletionCount?: number;
 }
 
 /** v2 pipeline: the full sync plan */
