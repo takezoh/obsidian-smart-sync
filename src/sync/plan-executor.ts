@@ -39,6 +39,7 @@ export interface ExecutionContext {
 	committer: StateCommitterContext;
 	conflictStrategy: SimplifiedConflictStrategy;
 	onConfirmation?: () => Promise<boolean>;
+	onProgress?: (completed: number, total: number) => void;
 	logger?: Logger;
 }
 
@@ -99,27 +100,34 @@ export async function executePlan(
 		}
 	}
 
+	const total = plan.actions.length;
+	let completed = 0;
+	const reportProgress = () => {
+		completed++;
+		ctx.onProgress?.(completed, total);
+	};
+
 	// Group A: parallel with AsyncPool(5)
 	const pool = new AsyncPool(POOL_CONCURRENCY);
 	await Promise.all(
 		groupA.map((action) =>
-			pool.run(() => executeAction(action, ctx, result))
+			pool.run(() => executeAction(action, ctx, result, reportProgress))
 		)
 	);
 
 	// Group B: delete_remote — serial
 	for (const action of groupB) {
-		await executeAction(action, ctx, result);
+		await executeAction(action, ctx, result, reportProgress);
 	}
 
 	// Group C: delete_local — serial
 	for (const action of groupC) {
-		await executeAction(action, ctx, result);
+		await executeAction(action, ctx, result, reportProgress);
 	}
 
 	// Group D: conflict — serial (may show UI modal)
 	for (const action of groupD) {
-		await executeConflictAction(action, ctx, result);
+		await executeConflictAction(action, ctx, result, reportProgress);
 	}
 
 	return result;
@@ -129,6 +137,7 @@ async function executeAction(
 	action: SyncAction,
 	ctx: ExecutionContext,
 	result: ExecutionResult,
+	reportProgress: () => void,
 ): Promise<void> {
 	try {
 		const { localEntity, remoteEntity } = await runActionIO(action, ctx);
@@ -143,6 +152,8 @@ async function executeAction(
 			error: error.message,
 		});
 		result.failed.push({ action, error });
+	} finally {
+		reportProgress();
 	}
 }
 
@@ -203,6 +214,7 @@ async function executeConflictAction(
 	action: SyncAction,
 	ctx: ExecutionContext,
 	result: ExecutionResult,
+	reportProgress: () => void,
 ): Promise<void> {
 	try {
 		const conflictCtx: ConflictResolverContext = {
@@ -233,5 +245,7 @@ async function executeConflictAction(
 			error: error.message,
 		});
 		result.failed.push({ action, error });
+	} finally {
+		reportProgress();
 	}
 }
