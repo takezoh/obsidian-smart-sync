@@ -73,7 +73,12 @@ export class BackendManager {
 				this.deps.getLogger().info("Backend initialized", { backend: settings.backendType });
 			}
 		} catch (e) {
-			this.deps.getLogger().error("Failed to initialize backend", { message: e instanceof Error ? e.message : String(e) });
+			const msg = e instanceof Error ? e.message : String(e);
+			this.deps.getLogger().error("Failed to initialize backend", { message: msg });
+			const status = (e as { status?: number }).status;
+			if (status === 400 || status === 401) {
+				this.deps.notify("Authentication expired. Please reconnect in settings.");
+			}
 		}
 	}
 

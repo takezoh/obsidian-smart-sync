@@ -160,3 +160,39 @@ describe("BackendManager — identity change triggers onIdentityChanged", () => 
 		expect(resetSpy).toHaveBeenCalledWith(settings);
 	});
 });
+
+describe("BackendManager — auth error notification on initBackend", () => {
+	it("notifies user when initBackend fails with status 400", async () => {
+		fakeProvider.resolveRemoteVault = async () => {
+			const err = new Error("Request failed, status 400");
+			(err as Error & { status: number }).status = 400;
+			throw err;
+		};
+
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		expect(deps.notify).toHaveBeenCalledWith(
+			"Authentication expired. Please reconnect in settings."
+		);
+	});
+
+	it("does not notify for non-auth errors", async () => {
+		fakeProvider.resolveRemoteVault = async () => {
+			const err = new Error("Network error");
+			(err as Error & { status: number }).status = 503;
+			throw err;
+		};
+
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		expect(deps.notify).not.toHaveBeenCalled();
+	});
+});
