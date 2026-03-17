@@ -22,11 +22,11 @@ const FILE_FIELDS = "id,name,mimeType,size,modifiedTime,parents,md5Checksum";
  * Uses Obsidian's requestUrl for CORS-free requests.
  */
 export class DriveClient {
-	private getToken: () => Promise<string>;
+	private getToken: (forceRefresh?: boolean) => Promise<string>;
 	private logger?: Logger;
 	private resumableUploader: ResumableUploader;
 
-	constructor(getToken: () => Promise<string>, logger?: Logger) {
+	constructor(getToken: (forceRefresh?: boolean) => Promise<string>, logger?: Logger) {
 		this.getToken = getToken;
 		this.logger = logger;
 		this.resumableUploader = new ResumableUploader({
@@ -39,15 +39,25 @@ export class DriveClient {
 	/** Wrap requestUrl with operation-name context, inject auth header, and preserve status/headers for retry logic */
 	private async request(
 		operation: string,
-		opts: RequestUrlParam
+		opts: RequestUrlParam,
+		retried = false
 	): Promise<Awaited<ReturnType<typeof requestUrl>>> {
-		const token = await this.getToken();
+		const token = await this.getToken(retried);
 		try {
 			return await requestUrl({
 				...opts,
 				headers: { ...opts.headers, Authorization: `Bearer ${token}` },
 			});
 		} catch (err) {
+			const status = err && typeof err === "object" && "status" in err
+				? (err as Record<string, unknown>).status
+				: undefined;
+
+			if (status === 401 && !retried) {
+				this.logger?.info("Drive API returned 401, refreshing token and retrying", { operation });
+				return this.request(operation, opts, true);
+			}
+
 			const msg = err instanceof Error ? err.message : String(err);
 			const wrapped = new Error(`Drive API ${operation} failed: ${msg}`);
 			if (err && typeof err === "object") {
