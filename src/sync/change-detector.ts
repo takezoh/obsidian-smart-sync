@@ -4,6 +4,7 @@ import type { SyncStateStore } from "./state";
 import type { LocalChangeTracker } from "./local-tracker";
 import { hasChanged, hasRemoteChanged } from "./change-compare";
 import { md5 } from "../utils/md5";
+import { AsyncPool } from "../queue/async-queue";
 
 export interface ChangeSet {
 	entries: MixedEntity[];
@@ -192,22 +193,27 @@ async function collectCold(deps: ChangeDetectorDeps, allRecords: SyncRecord[]): 
 	// Resolve empty hashes for cold start: compare local MD5 with remote's
 	// backend-provided contentChecksum to detect identical files without downloading.
 	// Only checks same-size files (different sizes are guaranteed different content).
-	for (const entry of pathMap.values()) {
-		if (!entry.local || !entry.remote || entry.prevSync) continue;
-		if (entry.local.hash || entry.remote.hash) continue;
-		if (entry.local.size !== entry.remote.size) continue;
+	const overlapping = [...pathMap.values()].filter(
+		(e) => e.local && e.remote && !e.prevSync &&
+			!e.local.hash && !e.remote.hash &&
+			e.local.size === e.remote.size &&
+			typeof e.remote.backendMeta?.contentChecksum === "string"
+	);
 
-		const remoteMd5 = entry.remote.backendMeta?.contentChecksum;
-		if (typeof remoteMd5 !== "string") continue;
-
-		const content = await localFs.read(entry.path);
-		const localMd5 = md5(content);
-
-		if (localMd5 === remoteMd5) {
-			entry.local = { ...entry.local, hash: `md5:${localMd5}` };
-			entry.remote = { ...entry.remote, hash: `md5:${localMd5}` };
-		}
-	}
+	const pool = new AsyncPool(10);
+	await Promise.all(
+		overlapping.map((entry) =>
+			pool.run(async () => {
+				const content = await localFs.read(entry.path);
+				const localMd5 = md5(content);
+				const remoteMd5 = entry.remote!.backendMeta!.contentChecksum as string;
+				if (localMd5 === remoteMd5) {
+					entry.local = { ...entry.local!, hash: `md5:${localMd5}` };
+					entry.remote = { ...entry.remote!, hash: `md5:${localMd5}` };
+				}
+			})
+		)
+	);
 
 	return { entries: Array.from(pathMap.values()), temperature: "cold" };
 }
