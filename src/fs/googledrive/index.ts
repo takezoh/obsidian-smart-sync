@@ -48,6 +48,29 @@ export class GoogleDriveFs implements IFileSystem {
 		this._changesPageToken = token;
 	}
 
+	private async withCacheMutex<TResolved, TResult>(opts: {
+		resolve: () => Promise<TResolved> | TResolved;
+		execute: (resolved: TResolved) => Promise<TResult>;
+		update: (resolved: TResolved, result: TResult) => void;
+		staleGuard: (resolved: TResolved) => { path: string; expectedId: string | undefined };
+		operationName: string;
+	}): Promise<{ resolved: TResolved; result: TResult }> {
+		const resolved = await this.cacheMutex.run(async () => {
+			await this.ensureInitialized();
+			return opts.resolve();
+		});
+		const result = await opts.execute(resolved);
+		await this.cacheMutex.run(() => {
+			const { path, expectedId } = opts.staleGuard(resolved);
+			if (expectedId && this.cache.getFile(path)?.id !== expectedId) {
+				this.logger?.warn(`Skipping stale cache update for ${opts.operationName}`, { path });
+				return;
+			}
+			opts.update(resolved, result);
+		});
+		return { resolved, result };
+	}
+
 	/** Full scan to build the metadata cache */
 	private async fullScan(): Promise<void> {
 		this.cache.clear();
@@ -79,9 +102,8 @@ export class GoogleDriveFs implements IFileSystem {
 		try {
 			await this.metadataStore.open();
 			const { files, meta } = await this.metadataStore.loadAll();
-			const storedRootId = meta.get("rootFolderId");
 			const storedToken = meta.get("changesStartPageToken");
-			if (storedRootId !== this.rootFolderId || !storedToken) {
+			if (!storedToken) {
 				return false;
 			}
 
@@ -107,7 +129,6 @@ export class GoogleDriveFs implements IFileSystem {
 			await this.metadataStore.open();
 			const records = this.cache.exportRecords();
 			const meta = new Map<string, string>();
-			meta.set("rootFolderId", this.rootFolderId);
 			if (this._changesPageToken) {
 				meta.set("changesStartPageToken", this._changesPageToken);
 			}
@@ -119,20 +140,16 @@ export class GoogleDriveFs implements IFileSystem {
 		}
 	}
 
-	/**
-	 * Apply incremental changes from the Drive changes.list API.
-	 * Updates the internal metadata cache and returns the new page token.
-	 * Falls back to a full re-scan if the cache has been invalidated.
-	 */
-	async applyIncrementalChanges(): Promise<void> {
-		return this.cacheMutex.run(() => this._applyIncrementalChanges());
+	// Kept for backward compatibility; delegates to getChangedPaths().
+	async applyIncrementalChanges(): Promise<{ modified: string[]; deleted: string[] } | null> {
+		return this.getChangedPaths();
 	}
 
 	/** Internal implementation of applyIncrementalChanges (caller must hold mutex) */
-	private async _applyIncrementalChanges(): Promise<void> {
+	private async _applyIncrementalChanges(): Promise<{ modified: string[]; deleted: string[] } | null> {
 		if (!this.initialized || !this._changesPageToken) {
 			await this.fullScan();
-			return;
+			return null;
 		}
 
 		const result = await applyIncrementalChanges(
@@ -148,16 +165,45 @@ export class GoogleDriveFs implements IFileSystem {
 		if (result.needsFullScan) {
 			this.initialized = false;
 			await this.fullScan();
-		} else {
-			this._changesPageToken = result.newToken;
+			return null;
 		}
+
+		this._changesPageToken = result.newToken;
+
+		const modified: string[] = [];
+		const deleted: string[] = [];
+		for (const path of result.changedPaths) {
+			// Note: removeTree() was already called during applyIncrementalChanges(), so
+			// deleted paths will correctly be absent from cache here. Edge case: if a path
+			// was removed as a descendant of a deleted folder, but a new file with the same
+			// path was added in the same batch, it would be misclassified as modified.
+			// This is unlikely in practice and does not cause data loss.
+			if (this.cache.hasFile(path)) {
+				modified.push(path);
+			} else {
+				deleted.push(path);
+			}
+		}
+		return { modified, deleted };
+	}
+
+	/**
+	 * Return paths changed since the last sync by applying incremental changes.
+	 * Should be called before list(). Returns null if a full scan was needed.
+	 */
+	async getChangedPaths(): Promise<{ modified: string[]; deleted: string[] } | null> {
+		return this.cacheMutex.run(() => this._applyIncrementalChanges());
 	}
 
 	async list(): Promise<FileEntity[]> {
 		return this.cacheMutex.run(async () => {
 			if (!this.initialized) {
 				const loaded = await this.loadFromCache();
-				if (!loaded) await this.fullScan();
+				if (loaded) {
+					await this._applyIncrementalChanges();
+				} else {
+					await this.fullScan();
+				}
 			} else if (this._changesPageToken) {
 				await this._applyIncrementalChanges();
 			}
@@ -215,40 +261,23 @@ export class GoogleDriveFs implements IFileSystem {
 		content: ArrayBuffer,
 		mtime: number
 	): Promise<FileEntity> {
-		// Phase 1: resolve upload arguments under mutex
-		// (ensureFolder must stay inside mutex for atomicity)
-		const { fileName, parentId, existingId } = await this.cacheMutex.run(
-			async () => {
-				await this.ensureInitialized();
+		const { result: driveFile } = await this.withCacheMutex({
+			operationName: "write",
+			resolve: async () => {
 				const existingFile = this.cache.getFile(path);
-				const eid = existingFile?.id;
-				const fname = path.split("/").pop()!;
+				const existingId = existingFile?.id;
+				const fileName = path.split("/").pop()!;
 				const parentPath = path.substring(0, path.lastIndexOf("/"));
-				const pid = parentPath
+				const parentId = parentPath
 					? await this.ensureFolder(parentPath)
 					: this.rootFolderId;
-				return { fileName: fname, parentId: pid, existingId: eid };
-			}
-		);
-
-		// Phase 2: upload outside mutex (network I/O)
-		const driveFile = await this.client.uploadFile(
-			fileName,
-			parentId,
-			content,
-			"application/octet-stream",
-			existingId,
-			mtime
-		);
-
-		// Phase 3: update cache under mutex with ID guard
-		// (applyIncrementalChanges may have updated the cache during phase 2)
-		await this.cacheMutex.run(() => {
-			if (existingId && this.cache.getFile(path)?.id !== existingId) {
-				this.logger?.warn("Skipping stale cache update for write", { path });
-				return;
-			}
-			this.cache.setFile(path, driveFile);
+				return { fileName, parentId, existingId };
+			},
+			execute: (r) => this.client.uploadFile(
+				r.fileName, r.parentId, content, "application/octet-stream", r.existingId, mtime
+			),
+			staleGuard: (r) => ({ path, expectedId: r.existingId }),
+			update: (_r, result) => { this.cache.setFile(path, result); },
 		});
 
 		const hash = await sha256(content);
@@ -313,7 +342,7 @@ export class GoogleDriveFs implements IFileSystem {
 		// (applyIncrementalChanges may have updated the cache during phase 2)
 		await this.cacheMutex.run(() => {
 			if (this.cache.getFile(path)?.id === fileId) {
-				this.cache.removePath(path);
+				this.cache.removeTree(path);
 			} else {
 				this.logger?.warn("Skipping stale cache update for delete", { path });
 			}
@@ -321,12 +350,9 @@ export class GoogleDriveFs implements IFileSystem {
 	}
 
 	async rename(oldPath: string, newPath: string): Promise<void> {
-		// Phase 1: prepare API arguments under mutex
-		// (ensureFolder must stay inside mutex for atomicity)
-		const { fileId, metadata, addParents, removeParents, wasFolder } =
-			await this.cacheMutex.run(async () => {
-				await this.ensureInitialized();
-
+		await this.withCacheMutex({
+			operationName: "rename",
+			resolve: async () => {
 				const driveFile = this.cache.getFile(oldPath);
 				if (!driveFile)
 					throw new Error(`File not found: ${oldPath}`);
@@ -335,25 +361,19 @@ export class GoogleDriveFs implements IFileSystem {
 
 				const oldName = oldPath.split("/").pop()!;
 				const newName = newPath.split("/").pop()!;
-				const oldParentPath = oldPath.substring(
-					0,
-					oldPath.lastIndexOf("/")
-				);
-				const newParentPath = newPath.substring(
-					0,
-					newPath.lastIndexOf("/")
-				);
+				const oldParentPath = oldPath.substring(0, oldPath.lastIndexOf("/"));
+				const newParentPath = newPath.substring(0, newPath.lastIndexOf("/"));
 
-				const meta: { name?: string } = {};
-				if (oldName !== newName) meta.name = newName;
+				const metadata: { name?: string } = {};
+				if (oldName !== newName) metadata.name = newName;
 
-				let addP: string | undefined;
-				let removeP: string | undefined;
+				let addParents: string | undefined;
+				let removeParents: string | undefined;
 				if (oldParentPath !== newParentPath) {
-					addP = newParentPath
+					addParents = newParentPath
 						? await this.ensureFolder(newParentPath)
 						: this.rootFolderId;
-					removeP = (driveFile.parents && driveFile.parents.length > 0
+					removeParents = (driveFile.parents && driveFile.parents.length > 0
 						? this.cache.findRelevantParentId(driveFile.parents, { has: (id: string) => this.cache.hasId(id) })
 						: undefined)
 						?? (oldParentPath
@@ -363,34 +383,23 @@ export class GoogleDriveFs implements IFileSystem {
 
 				return {
 					fileId: driveFile.id,
-					metadata: meta,
-					addParents: addP,
-					removeParents: removeP,
+					metadata,
+					addParents,
+					removeParents,
 					wasFolder: this.cache.isFolder(oldPath),
 				};
-			});
-
-		// Phase 2: API call outside mutex (network I/O)
-		const updated = await this.client.updateFileMetadata(
-			fileId,
-			metadata,
-			addParents,
-			removeParents
-		);
-
-		// Phase 3: update cache under mutex with ID guard
-		// (applyIncrementalChanges may have updated the cache during phase 2)
-		await this.cacheMutex.run(() => {
-			if (this.cache.getFile(oldPath)?.id !== fileId) {
-				this.logger?.warn("Skipping stale cache update for rename", { oldPath, newPath });
-				return;
-			}
-
-			this.cache.removeFile(oldPath);
-			this.cache.setFile(newPath, updated);
-			if (wasFolder) {
-				this.cache.rewriteChildPaths(oldPath, newPath);
-			}
+			},
+			execute: (r) => this.client.updateFileMetadata(
+				r.fileId, r.metadata, r.addParents, r.removeParents
+			),
+			staleGuard: (r) => ({ path: oldPath, expectedId: r.fileId }),
+			update: (r, result) => {
+				this.cache.removeEntry(oldPath);
+				this.cache.setFile(newPath, result);
+				if (r.wasFolder) {
+					this.cache.rewriteChildPaths(oldPath, newPath);
+				}
+			},
 		});
 	}
 
@@ -432,12 +441,6 @@ export class GoogleDriveFs implements IFileSystem {
 		}
 
 		return parentId;
-	}
-
-	/** Force re-initialization on next operation */
-	invalidateCache(): void {
-		this.initialized = false;
-		void this.metadataStore?.clear();
 	}
 
 	/** Close the metadata store (call on plugin unload) */

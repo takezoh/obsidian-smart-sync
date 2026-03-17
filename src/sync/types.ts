@@ -14,7 +14,7 @@ export interface SyncRecord {
 	localSize: number;
 	/** Remote file size at last successful sync */
 	remoteSize: number;
-	/** Backend-specific metadata snapshot (e.g. Drive file ID) */
+	/** Backend-specific metadata snapshot (e.g. Drive contentChecksum) */
 	backendMeta?: Record<string, unknown>;
 	/** Timestamp when this sync completed (Unix epoch ms) */
 	syncedAt: number;
@@ -28,43 +28,26 @@ export interface MixedEntity {
 	prevSync?: SyncRecord;
 }
 
-/** Possible sync decisions */
-export type DecisionType =
-	| "local_created_push"
-	| "remote_created_pull"
-	| "local_modified_push"
-	| "remote_modified_pull"
-	| "local_deleted_propagate"
-	| "remote_deleted_propagate"
-	| "initial_match"
-	| "conflict_both_modified"
-	| "conflict_both_created"
-	| "conflict_delete_vs_modify"
-	| "both_deleted_cleanup"
-	| "no_action";
-
-/** Strategy for resolving conflicts */
+/**
+ * Strategy for resolving conflicts.
+ *
+ * v2 simplified strategies: auto_merge, duplicate, ask
+ * Legacy strategies (keep_newer, keep_local, keep_remote, three_way_merge)
+ * are retained for conflict.ts internal use and migration support.
+ */
 export type ConflictStrategy =
 	| "keep_newer"
 	| "keep_local"
 	| "keep_remote"
 	| "duplicate"
 	| "three_way_merge"
+	| "auto_merge"
 	| "ask";
-
-/** A computed sync decision for a single path */
-export interface SyncDecision {
-	path: string;
-	decision: DecisionType;
-	local?: FileEntity;
-	remote?: FileEntity;
-	prevSync?: SyncRecord;
-}
 
 /** A record of a conflict resolution for audit/history purposes */
 export interface ConflictRecord {
 	path: string;
-	decisionType: DecisionType;
+	actionType: SyncActionType;
 	strategy: ConflictStrategy;
 	action: "kept_local" | "kept_remote" | "duplicated" | "merged";
 	local?: FileEntity;
@@ -73,4 +56,40 @@ export interface ConflictRecord {
 	hasConflictMarkers?: boolean;
 	resolvedAt: string;
 	sessionId: string;
+}
+
+/** Sync service status */
+export type SyncStatus = "idle" | "syncing" | "error" | "partial_error" | "not_connected";
+
+/** v2 pipeline: action types */
+export type SyncActionType =
+	| "push"
+	| "pull"
+	| "delete_local"
+	| "delete_remote"
+	| "conflict"
+	| "match"
+	| "cleanup";
+
+/** v2 pipeline: a single planned action for a path */
+export interface SyncAction {
+	path: string;
+	action: SyncActionType;
+	local?: FileEntity;
+	remote?: FileEntity;
+	baseline?: SyncRecord;
+}
+
+/** v2 pipeline: result of safety checks before execution */
+export interface SafetyCheckResult {
+	shouldAbort: boolean;
+	requiresConfirmation: boolean;
+	deletionRatio?: number;
+	deletionCount?: number;
+}
+
+/** v2 pipeline: the full sync plan */
+export interface SyncPlan {
+	actions: SyncAction[];
+	safetyCheck: SafetyCheckResult;
 }

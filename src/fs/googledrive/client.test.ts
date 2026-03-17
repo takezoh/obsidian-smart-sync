@@ -10,12 +10,9 @@ describe("DriveClient error wrapping", () => {
 			new Error("Request failed")
 		);
 
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		await expect(client.listFiles("folder-id")).rejects.toThrow(
 			"Drive API listFiles failed: Request failed"
 		);
@@ -30,12 +27,9 @@ describe("DriveClient error wrapping", () => {
 		});
 		const mockRequestUrl = (await spyRequestUrl()).mockRejectedValue(originalError);
 
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		try {
 			await client.downloadFile("file-id");
 			expect.fail("should have thrown");
@@ -57,12 +51,9 @@ describe("DriveClient.uploadFile modifiedTime default", () => {
 			() => Promise.resolve(mockRes({ id: "f1", name: "test.txt", mimeType: "text/plain" }))
 		);
 
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const content = new TextEncoder().encode("hello").buffer.slice(0);
 
 		// Call without modifiedTime parameter
@@ -82,11 +73,7 @@ describe("DriveClient.uploadFile modifiedTime default", () => {
 
 describe("DriveClient.listAllFiles parallelization", () => {
 	it("fetches nested folders concurrently via AsyncPool(3)", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		// Track concurrent calls to detect parallelism
 		let concurrent = 0;
@@ -123,7 +110,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 			});
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const result = await client.listAllFiles("root");
 
 		// 3 folders + 3 files = 6 total
@@ -136,11 +123,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 	});
 
 	it("collects all files from deeply nested structure", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation((req) => {
 			const url = typeof req === "string" ? req : (req as { url: string }).url;
@@ -159,7 +142,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 			return Promise.resolve(mockRes({ files }));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const result = await client.listAllFiles("root");
 
 		expect(result).toHaveLength(3);
@@ -171,11 +154,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 	});
 
 	it("propagates errors from parallel folder fetches", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation((req) => {
 			const url = typeof req === "string" ? req : (req as { url: string }).url;
@@ -196,7 +175,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 			return Promise.resolve(mockRes({ files: [] }));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		await expect(client.listAllFiles("root")).rejects.toThrow();
 
 		mockRequestUrl.mockRestore();
@@ -205,11 +184,7 @@ describe("DriveClient.listAllFiles parallelization", () => {
 
 describe("DriveClient resumable upload", () => {
 	it("uploads large file via resumable session (init + single PUT)", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(() => {
@@ -225,7 +200,7 @@ describe("DriveClient resumable upload", () => {
 			}));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const content = new ArrayBuffer(12 * 1024 * 1024);
 		const result = await client.uploadFile(
 			"large.bin",
@@ -243,11 +218,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("caches resume URL on upload failure and resumes on retry", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const fileSize = 6 * 1024 * 1024;
 		const content = new ArrayBuffer(fileSize);
@@ -280,7 +251,7 @@ describe("DriveClient resumable upload", () => {
 			return Promise.reject(new Error("Unexpected call"));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 
 		// First attempt: should fail and cache the resume URL
 		await expect(
@@ -304,11 +275,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("falls back to fresh upload when status query fails", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const fileSize = 6 * 1024 * 1024;
 		const content = new ArrayBuffer(fileSize);
@@ -338,7 +305,7 @@ describe("DriveClient resumable upload", () => {
 			return Promise.reject(new Error("Unexpected call"));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 
 		// First attempt fails
 		await expect(client.uploadFile("file.bin", "parent", content)).rejects.toThrow();
@@ -352,11 +319,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("returns completed file when status query returns 200", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const fileSize = 6 * 1024 * 1024;
 		const content = new ArrayBuffer(fileSize);
@@ -380,7 +343,7 @@ describe("DriveClient resumable upload", () => {
 			return Promise.reject(new Error("Unexpected call"));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 
 		await expect(client.uploadFile("file.bin", "parent", content)).rejects.toThrow();
 
@@ -392,11 +355,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("ignores expired cache entries", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const fileSize = 6 * 1024 * 1024;
 		const content = new ArrayBuffer(fileSize);
@@ -414,7 +373,7 @@ describe("DriveClient resumable upload", () => {
 			}));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const cache = (client as unknown as DriveClientInternal).resumableUploader.resumeCache;
 
 		// Manually insert an expired cache entry (7 hours old)
@@ -433,11 +392,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("ignores cache when file size differs", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(() => {
@@ -452,7 +407,7 @@ describe("DriveClient resumable upload", () => {
 			}));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const cache = (client as unknown as DriveClientInternal).resumableUploader.resumeCache;
 
 		// Cache entry with different totalSize
@@ -471,11 +426,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("uses existingFileId as cache key when provided", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		const fileSize = 6 * 1024 * 1024;
 		const content = new ArrayBuffer(fileSize);
@@ -492,7 +443,7 @@ describe("DriveClient resumable upload", () => {
 			return Promise.reject(new Error("Unexpected call"));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		await expect(
 			client.uploadFile("file.bin", "parent", content, "application/octet-stream", "existing-id-123")
 		).rejects.toThrow();
@@ -505,11 +456,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("propagates errors during resumable upload", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(() => {
@@ -522,7 +469,7 @@ describe("DriveClient resumable upload", () => {
 			}));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const content = new ArrayBuffer(6 * 1024 * 1024);
 
 		await expect(
@@ -533,11 +480,7 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("handles file just over threshold", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
-
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
 
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(() => {
@@ -552,7 +495,7 @@ describe("DriveClient resumable upload", () => {
 			}));
 		});
 
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const content = new ArrayBuffer(5 * 1024 * 1024 + 1);
 		const result = await client.uploadFile("medium.bin", "parent", content);
 
@@ -563,11 +506,9 @@ describe("DriveClient resumable upload", () => {
 	});
 
 	it("clearResumeCache removes all entries", async () => {
-		const { GoogleAuth } = await import("./auth");
 		const { DriveClient } = await import("./client");
 
-		const auth = new GoogleAuth();
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const cache = (client as unknown as DriveClientInternal).resumableUploader.resumeCache;
 
 		cache.set("key1", { uploadUrl: "url1", totalSize: 100, createdAt: Date.now() });
@@ -576,5 +517,61 @@ describe("DriveClient resumable upload", () => {
 
 		client.clearResumeCache();
 		expect(cache.size).toBe(0);
+	});
+});
+
+describe("DriveClient 401 retry", () => {
+	it("retries once with forceRefresh on 401", async () => {
+		let callCount = 0;
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			callCount++;
+			if (callCount === 1) {
+				throw Object.assign(new Error("Unauthorized"), { status: 401 });
+			}
+			return mockRes({ startPageToken: "token123" });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		const result = await client.getChangesStartToken();
+		expect(result).toBe("token123");
+		expect(callCount).toBe(2);
+		expect(getToken).toHaveBeenCalledTimes(2);
+		expect(getToken).toHaveBeenNthCalledWith(1, false);
+		expect(getToken).toHaveBeenNthCalledWith(2, true);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("does not retry more than once on repeated 401", async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			throw Object.assign(new Error("Unauthorized"), { status: 401 });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		await expect(client.getChangesStartToken()).rejects.toThrow("Drive API getChangesStartToken failed");
+		expect(getToken).toHaveBeenCalledTimes(2);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("does not retry on non-401 errors", async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			throw Object.assign(new Error("Server Error"), { status: 500 });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		await expect(client.getChangesStartToken()).rejects.toThrow("Drive API getChangesStartToken failed");
+		expect(getToken).toHaveBeenCalledTimes(1);
+
+		mockRequestUrl.mockRestore();
 	});
 });

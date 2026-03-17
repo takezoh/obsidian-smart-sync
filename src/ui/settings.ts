@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type SmartSyncPlugin from "../main";
-import type { ConflictStrategy } from "../sync/types";
+import type { SimplifiedConflictStrategy } from "../sync/conflict-resolver";
 import { getAllBackendProviders, getBackendProvider } from "../fs/registry";
 import { getBackendSettingsRenderer } from "./backend-settings";
 
@@ -44,29 +44,13 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 			)
 			.addDropdown((dropdown) =>
 				dropdown
-					.addOption("keep_newer", "Keep newer")
-					.addOption("keep_local", "Keep local")
-					.addOption("keep_remote", "Keep remote")
-					.addOption("duplicate", "Create duplicate")
+					.addOption("auto_merge", "Auto merge (recommended)")
+					.addOption("duplicate", "Always create duplicate")
 					.addOption("ask", "Ask each time")
 					.setValue(this.plugin.settings.conflictStrategy)
 					.onChange(async (value) => {
 						this.plugin.settings.conflictStrategy =
-							value as ConflictStrategy;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Enable 3-way merge")
-			.setDesc(
-				"Attempt to merge text file changes automatically using the last synced version as base. Falls back to conflict strategy on failure."
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.enableThreeWayMerge)
-					.onChange(async (value) => {
-						this.plugin.settings.enableThreeWayMerge = value;
+							value as SimplifiedConflictStrategy;
 						await this.plugin.saveSettings();
 					})
 			);

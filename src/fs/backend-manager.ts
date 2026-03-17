@@ -4,6 +4,7 @@ import type { IFileSystem } from "./interface";
 import type { IBackendProvider } from "./backend";
 import type { Logger } from "../logging/logger";
 import { getBackendProvider } from "./registry";
+import { AuthError } from "./errors";
 
 export interface BackendManagerDeps {
 	getSettings: () => SmartSyncSettings;
@@ -79,8 +80,7 @@ export class BackendManager {
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			this.deps.getLogger().error("Failed to initialize backend", { message: msg });
-			const status = (e as { status?: number }).status;
-			if (status === 400 || status === 401) {
+			if (e instanceof AuthError) {
 				this.deps.notify("Authentication expired. Please reconnect in settings.");
 			}
 		}

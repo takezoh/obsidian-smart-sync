@@ -55,6 +55,9 @@ export async function resolveConflict(
 		case "three_way_merge":
 			return attemptThreeWayMerge(ctx, fallback ?? "keep_newer");
 
+		case "auto_merge":
+			return attemptThreeWayMerge(ctx, fallback ?? "keep_newer");
+
 		case "ask":
 			// Handled by executor via onConflict callback before reaching here.
 			// If we get here, it means the callback was not provided — fall back safely.
@@ -277,41 +280,6 @@ async function attemptThreeWayMerge(
 		action: "merged",
 		hasConflictMarkers: mergeResult.hasConflicts,
 	};
-}
-
-/** Build sync record from current file state on both sides */
-export async function buildSyncRecord(
-	ctx: Pick<ConflictContext, "path" | "localFs" | "remoteFs" | "stateStore" | "logger">,
-	storeContent?: boolean,
-): Promise<SyncRecord | null> {
-	const { path, localFs, remoteFs, stateStore, logger } = ctx;
-	const localStat = await localFs.stat(path);
-	const remoteStat = await remoteFs.stat(path);
-
-	if (!localStat && !remoteStat) return null;
-	if (localStat?.isDirectory || remoteStat?.isDirectory) return null;
-
-	const record: SyncRecord = {
-		path,
-		hash: localStat?.hash || remoteStat?.hash || "",
-		localMtime: localStat?.mtime ?? 0,
-		remoteMtime: remoteStat?.mtime ?? 0,
-		localSize: localStat?.size ?? 0,
-		remoteSize: remoteStat?.size ?? 0,
-		backendMeta: remoteStat?.backendMeta,
-		syncedAt: Date.now(),
-	};
-
-	if (storeContent && localStat && stateStore && isMergeEligible(path, record.localSize)) {
-		try {
-			const content = await localFs.read(path);
-			await stateStore.putContent(path, content);
-		} catch (err) {
-			logger?.warn("Failed to store content for 3-way merge", { path, error: err instanceof Error ? err.message : String(err) });
-		}
-	}
-
-	return record;
 }
 
 function isValidJson(content: string): boolean {

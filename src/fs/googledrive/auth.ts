@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { Logger } from "../../logging/logger";
 import { assertTokenResponse } from "./types";
+import { AuthError } from "../errors";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -11,6 +12,7 @@ export const DEFAULT_CUSTOM_REDIRECT_URI = "https://smartsync.takezo.dev/callbac
 const REDIRECT_URI = `${AUTH_SERVER_URL}/google/callback`;
 
 const GOOGLE_CLIENT_ID = "135801498656-lfjor2ml3v26t9l63mkoka0bndgl9eue.apps.googleusercontent.com";
+const AUTH_FAILED_COOLDOWN = 60_000;
 
 /** Shared interface for GoogleAuth and GoogleAuthDirect */
 export interface IGoogleAuth {
@@ -22,7 +24,7 @@ export interface IGoogleAuth {
 	getCodeVerifier(): string | null;
 	setCodeVerifier(verifier: string): void;
 	handleAuthCallback(params: Record<string, string | undefined>): Promise<void>;
-	getAccessToken(): Promise<string>;
+	getAccessToken(forceRefresh?: boolean): Promise<string>;
 	getTokenState(): { refreshToken: string; accessToken: string; accessTokenExpiry: number };
 	revokeToken(): Promise<void>;
 }
@@ -40,13 +42,13 @@ abstract class GoogleAuthBase implements IGoogleAuth {
 	protected logger?: Logger;
 	private authState: string | null = null;
 	private codeVerifier: string | null = null;
-	protected authFailed = false;
+	protected authFailedAt = 0;
 
 	setTokens(refreshToken: string, accessToken: string, expiry: number): void {
 		this.refreshToken = refreshToken;
 		this.accessToken = accessToken;
 		this.accessTokenExpiry = expiry;
-		this.authFailed = false;
+		this.authFailedAt = 0;
 	}
 
 	get isAuthenticated(): boolean {
@@ -73,14 +75,14 @@ abstract class GoogleAuthBase implements IGoogleAuth {
 
 	abstract handleAuthCallback(params: Record<string, string | undefined>): Promise<void>;
 
-	async getAccessToken(): Promise<string> {
+	async getAccessToken(forceRefresh = false): Promise<string> {
 		if (!this.refreshToken) {
-			throw new Error("Not authenticated. Please connect to Google Drive first.");
+			throw new AuthError("Not authenticated. Please connect to Google Drive first.", 401);
 		}
-		if (this.authFailed) {
-			throw new Error("Authentication expired. Please reconnect in settings.");
+		if (this.authFailedAt > 0 && Date.now() - this.authFailedAt < AUTH_FAILED_COOLDOWN) {
+			throw new AuthError("Authentication expired. Please reconnect in settings.", 401);
 		}
-		if (this.accessToken && Date.now() < this.accessTokenExpiry - 60_000) {
+		if (!forceRefresh && this.accessToken && Date.now() < this.accessTokenExpiry - 60_000) {
 			return this.accessToken;
 		}
 		if (this.refreshPromise) {
@@ -95,6 +97,20 @@ abstract class GoogleAuthBase implements IGoogleAuth {
 	}
 
 	protected abstract performRefresh(): Promise<string>;
+
+	/** Handle token refresh errors: set authFailedAt timestamp and throw AuthError for 400/401 */
+	protected handleRefreshError(err: unknown): never {
+		const status = (err as { status?: number }).status;
+		if (status === 400 || status === 401) {
+			this.authFailedAt = Date.now();
+		}
+		const msg = err instanceof Error ? err.message : String(err);
+		this.logger?.error("Token refresh failed", { error: msg });
+		if (status === 400 || status === 401) {
+			throw new AuthError(`Token refresh failed: ${msg}`, status);
+		}
+		throw err as Error;
+	}
 
 	getTokenState(): { refreshToken: string; accessToken: string; accessTokenExpiry: number } {
 		return {
@@ -140,6 +156,7 @@ abstract class GoogleAuthBase implements IGoogleAuth {
 		if (token.refresh_token) {
 			this.refreshToken = token.refresh_token;
 		}
+		this.authFailedAt = 0;
 	}
 
 	/** Generate a state parameter with the given extra fields */
@@ -225,13 +242,7 @@ export class GoogleAuth extends GoogleAuthBase {
 			this.storeTokenResponse(token);
 			return this.accessToken;
 		} catch (err) {
-			const status = (err as { status?: number }).status;
-			if (status === 400 || status === 401) {
-				this.authFailed = true;
-			}
-			const msg = err instanceof Error ? err.message : String(err);
-			this.logger?.error("Token refresh failed", { error: msg });
-			throw err;
+			this.handleRefreshError(err);
 		}
 	}
 }
@@ -331,13 +342,7 @@ export class GoogleAuthDirect extends GoogleAuthBase {
 			this.storeTokenResponse(token);
 			return this.accessToken;
 		} catch (err) {
-			const status = (err as { status?: number }).status;
-			if (status === 400 || status === 401) {
-				this.authFailed = true;
-			}
-			const msg = err instanceof Error ? err.message : String(err);
-			this.logger?.error("Token refresh failed", { error: msg });
-			throw err;
+			this.handleRefreshError(err);
 		}
 	}
 }

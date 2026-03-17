@@ -49,8 +49,8 @@ export class DriveMetadataCache {
 		if (isNew) this.addToIndex(path);
 	}
 
-	/** Remove a single file from pathToFile/idToPath/folders and the children index */
-	removeFile(path: string): void {
+	/** Remove a single entry from pathToFile/idToPath/folders and the children index */
+	removeEntry(path: string): void {
 		const driveFile = this.pathToFile.get(path);
 		if (driveFile) this.idToPath.delete(driveFile.id);
 		this.removeFromIndex(path);
@@ -240,8 +240,8 @@ export class DriveMetadataCache {
 		}
 	}
 
-	/** Remove a path and all its children from the cache */
-	removePath(path: string): void {
+	/** Remove an entry and all its descendants from the cache */
+	removeTree(path: string): void {
 		const driveFile = this.pathToFile.get(path);
 		if (driveFile) {
 			this.idToPath.delete(driveFile.id);
@@ -297,7 +297,7 @@ export class DriveMetadataCache {
 			// Can't resolve path (moved outside root or parent unknown).
 			// Remove stale cache entry if one exists.
 			if (oldPath) {
-				this.removePath(oldPath);
+				this.removeTree(oldPath);
 			}
 			return;
 		}

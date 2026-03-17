@@ -29,7 +29,7 @@ function createMockAdapter(): LoggerAdapter & { files: Map<string, string>; dirs
 function makeRecord(overrides: Partial<ConflictRecord> = {}): ConflictRecord {
 	return {
 		path: "notes/test.md",
-		decisionType: "conflict_both_modified",
+		actionType: "conflict",
 		strategy: "keep_newer",
 		action: "kept_local",
 		resolvedAt: "2026-03-07T10:00:00.000Z",

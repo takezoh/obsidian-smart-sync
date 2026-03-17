@@ -100,6 +100,14 @@ export function createMockStateStore(): {
 		async open() {},
 		async close() {},
 		async get(path: string) { return records.get(path); },
+		async getMany(paths: string[]) {
+			const result = new Map<string, SyncRecord>();
+			for (const p of paths) {
+				const r = records.get(p);
+				if (r !== undefined) result.set(p, r);
+			}
+			return result;
+		},
 		async getAll() { return Array.from(records.values()); },
 		async put(record: SyncRecord) { records.set(record.path, record); },
 		async delete(path: string) { records.delete(path); contents.delete(path); },

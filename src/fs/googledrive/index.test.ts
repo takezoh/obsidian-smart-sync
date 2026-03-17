@@ -92,10 +92,7 @@ describe("GoogleDriveFs.write contentChecksum", () => {
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const fs = new GoogleDriveFs(client, "root");
 
 		(fs as unknown as GoogleDriveFsInternal).initialized = true;
@@ -126,10 +123,7 @@ describe("GoogleDriveFs.write contentChecksum", () => {
 
 		const { GoogleDriveFs } = await import("./index");
 		const { DriveClient } = await import("./client");
-		const { GoogleAuth } = await import("./auth");
-		const auth = new GoogleAuth();
-		auth.setTokens("refresh", "access", Date.now() + 3600_000);
-		const client = new DriveClient(auth);
+		const client = new DriveClient(() => Promise.resolve("access"));
 		const fs = new GoogleDriveFs(client, "root");
 
 		(fs as unknown as GoogleDriveFsInternal).initialized = true;
@@ -319,7 +313,7 @@ describe("GoogleDriveFs circular parent reference", () => {
 });
 
 describe("GoogleDriveFs children index", () => {
-	it("removePath removes all descendants (nested folders)", async () => {
+	it("removeTree removes all descendants (nested folders)", async () => {
 		const { GoogleDriveFs } = await import("./index");
 
 		const mockClient = {
@@ -464,70 +458,107 @@ describe("GoogleDriveFs cache persistence", () => {
 		await store.close();
 	});
 
-	it("rootFolderId mismatch falls back to fullScan", async () => {
-		const { GoogleDriveFs } = await import("./index");
-		const { MetadataStore } = await import("../../store/metadata-store");
 
-		const mockClient1 = {
+});
+
+describe("GoogleDriveFs.getChangedPaths", () => {
+	it("returns modified and deleted paths on successful incremental changes", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const mockClient = {
 			listAllFiles: vi.fn().mockResolvedValue([
-				{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root1"] },
+				{ id: "f1", name: "notes", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+				{ id: "file1", name: "keep.md", mimeType: "text/plain", parents: ["f1"] },
+				{ id: "file2", name: "remove.md", mimeType: "text/plain", parents: ["f1"] },
 			]),
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockResolvedValue({
+				changes: [
+					// file1 (keep.md) is modified
+					{
+						type: "file",
+						fileId: "file1",
+						removed: false,
+						file: { id: "file1", name: "keep.md", mimeType: "text/plain", parents: ["f1"], modifiedTime: "2024-06-01T00:00:00.000Z" },
+					},
+					// file2 (remove.md) is deleted
+					{ type: "file", fileId: "file2", removed: true },
+				],
+				newStartPageToken: "token2",
+			}),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		await fs.list();
+
+		const result = await fs.getChangedPaths();
+
+		expect(result).not.toBeNull();
+		expect(result!.modified).toContain("notes/keep.md");
+		expect(result!.deleted).toContain("notes/remove.md");
+	});
+
+	it("returns null when not initialized (triggers full scan)", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const listAllFiles = vi.fn().mockResolvedValue([
+			{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
+		]);
+		const mockClient = {
+			listAllFiles,
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("mismatch-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
+		const fs = new GoogleDriveFs(mockClient, "root");
+		// Do NOT call list() first — fs is not initialized
 
-		// Persist with rootFolderId = "root1"
-		const fs1 = new GoogleDriveFs(mockClient1, "root1", undefined, store);
-		await fs1.list();
+		const result = await fs.getChangedPaths();
 
-		// Second instance with different rootFolderId
-		const listAllFilesSpy2 = vi.fn().mockResolvedValue([
-			{ id: "file2", name: "b.md", mimeType: "text/plain", parents: ["root2"] },
-		]);
-		const mockClient2 = {
-			listAllFiles: listAllFilesSpy2,
-			getChangesStartToken: vi.fn().mockResolvedValue("token2"),
-		} as never;
-		const fs2 = new GoogleDriveFs(mockClient2, "root2", undefined, store);
-		const files = await fs2.list();
-
-		// Should have done a full scan with root2
-		expect(listAllFilesSpy2).toHaveBeenCalled();
-		expect(files[0]!.path).toBe("b.md");
-
-		await store.close();
+		// null means a full scan was performed
+		expect(result).toBeNull();
+		// Full scan should have initialized the fs
+		expect(listAllFiles).toHaveBeenCalledOnce();
 	});
 
-	it("invalidateCache clears IDB so next load does fullScan", async () => {
+	it("returns null on 410 fallback (token expired)", async () => {
 		const { GoogleDriveFs } = await import("./index");
-		const { MetadataStore } = await import("../../store/metadata-store");
 
+		const httpError = { status: 410, message: "Gone" };
+		const listAllFiles = vi.fn().mockResolvedValue([
+			{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
+		]);
+		const mockClient = {
+			listAllFiles,
+			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockRejectedValue(httpError),
+		} as never;
+
+		const fs = new GoogleDriveFs(mockClient, "root");
+		await fs.list();
+
+		const result = await fs.getChangedPaths();
+
+		// 410 triggers full scan, returns null
+		expect(result).toBeNull();
+		// A second full scan should have been triggered
+		expect(listAllFiles).toHaveBeenCalledTimes(2);
+	});
+
+	it("propagates auth errors from the Drive API", async () => {
+		const { GoogleDriveFs } = await import("./index");
+
+		const authError = { status: 401, message: "Unauthorized" };
 		const mockClient = {
 			listAllFiles: vi.fn().mockResolvedValue([
 				{ id: "file1", name: "a.md", mimeType: "text/plain", parents: ["root"] },
 			]),
 			getChangesStartToken: vi.fn().mockResolvedValue("token1"),
+			listChanges: vi.fn().mockRejectedValue(authError),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("invalidate-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
-		const fs = new GoogleDriveFs(mockClient, "root", undefined, store);
+		const fs = new GoogleDriveFs(mockClient, "root");
 		await fs.list();
-		// Wait for async persist
-		await new Promise((r) => setTimeout(r, 50));
 
-		// Verify IDB has data
-		let loaded = await store.loadAll();
-		expect(loaded.files).toHaveLength(1);
-
-		// Now invalidate and wait for clear
-		fs.invalidateCache();
-		await new Promise((r) => setTimeout(r, 50));
-
-		loaded = await store.loadAll();
-		expect(loaded.files).toHaveLength(0);
-		expect(loaded.meta.size).toBe(0);
-
-		await store.close();
+		await expect(fs.getChangedPaths()).rejects.toEqual(authError);
 	});
 });

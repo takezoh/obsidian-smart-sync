@@ -180,8 +180,8 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 
 		const googleAuth = this.auth.getOrCreateGoogleAuth(data, logger);
 		googleAuth.setTokens(tokens.refreshToken, tokens.accessToken, data.accessTokenExpiry);
-		const client = new DriveClient(googleAuth, logger);
-		const metadataStore = new MetadataStore<DriveFile>(data.remoteVaultFolderId, {
+		const client = new DriveClient((force) => googleAuth.getAccessToken(force), logger);
+		const metadataStore = new MetadataStore<DriveFile>(`${settings.vaultId}-${data.remoteVaultFolderId}`, {
 			dbNamePrefix: "smart-sync-drive",
 			version: 1,
 		});
@@ -241,7 +241,7 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 		const tokens = readTokens(this.secretStore, this.type);
 		const googleAuth = this.auth.getOrCreateGoogleAuth(data, logger);
 		googleAuth.setTokens(tokens.refreshToken, tokens.accessToken, data.accessTokenExpiry);
-		const client = new DriveClient(googleAuth, logger);
+		const client = new DriveClient((force) => googleAuth.getAccessToken(force), logger);
 		const cachedFolderId = data.remoteVaultFolderId || undefined;
 		return resolveGDriveRemoteVault(client, vaultName, cachedFolderId, logger);
 	}

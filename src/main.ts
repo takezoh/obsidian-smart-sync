@@ -1,17 +1,17 @@
-import { debounce, Notice, Platform, Plugin, TAbstractFile } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SmartSyncSettings } from "./settings";
 import { SmartSyncSettingTab } from "./ui/settings";
 import { LocalFs } from "./fs/local/index";
 import { BackendManager } from "./fs/backend-manager";
 import { initRegistry } from "./fs/registry";
 import type { ISecretStore } from "./fs/secret-store";
-import { SyncService, SyncStatus } from "./sync/service";
-import { ConflictModal } from "./ui/conflict-modal";
-import { ConflictSummaryModal, summaryChoiceToStrategy } from "./ui/conflict-summary-modal";
+import type { SyncStatus } from "./sync/orchestrator";
+import { SyncOrchestrator } from "./sync/orchestrator";
+import { SyncScheduler } from "./sync/scheduler";
+import { LocalChangeTracker } from "./sync/local-tracker";
 import { Logger, getDeviceName } from "./logging/logger";
 import type { LoggerAdapter } from "./logging/logger";
-
-const DEBOUNCE_MS = 5000;
+import { migrateConflictStrategy } from "./migrate";
 
 export default class SmartSyncPlugin extends Plugin {
 	settings!: SmartSyncSettings;
@@ -19,8 +19,9 @@ export default class SmartSyncPlugin extends Plugin {
 	backendManager!: BackendManager;
 	private statusBarEl: HTMLElement | null = null;
 	private syncStatus: SyncStatus = "not_connected";
-	private autoSyncIntervalId: number | null = null;
-	private syncService!: SyncService;
+	private orchestrator!: SyncOrchestrator;
+	private scheduler!: SyncScheduler;
+	private localTracker!: LocalChangeTracker;
 	private settingTab: SmartSyncSettingTab | null = null;
 	private logger!: Logger;
 
@@ -58,7 +59,7 @@ export default class SmartSyncPlugin extends Plugin {
 				this.updateStatusBar();
 			},
 			onIdentityChanged: async () => {
-				await this.syncService?.clearSyncState();
+				await this.orchestrator?.clearSyncState();
 			},
 			notify: (message) => {
 				new Notice(message);
@@ -68,7 +69,9 @@ export default class SmartSyncPlugin extends Plugin {
 			},
 		});
 
-		this.syncService = new SyncService({
+		this.localTracker = new LocalChangeTracker();
+
+		this.orchestrator = new SyncOrchestrator({
 			getSettings: () => this.settings,
 			saveSettings: () => this.saveSettings(),
 			localFs: () => this.localFs,
@@ -85,16 +88,23 @@ export default class SmartSyncPlugin extends Plugin {
 			notify: (message, durationMs) => {
 				new Notice(message, durationMs);
 			},
-			resolveConflict: async (decision) => {
-				const modal = new ConflictModal(this.app, decision);
-				return modal.waitForResolution();
-			},
-			resolveConflictBatch: async (conflicts) => {
-				const modal = new ConflictSummaryModal(this.app, conflicts);
-				const choice = await modal.waitForChoice();
-				return summaryChoiceToStrategy(choice);
-			},
+			localTracker: this.localTracker,
 			logger: this.logger,
+		});
+
+		this.scheduler = new SyncScheduler({
+			workspace: this.app.workspace,
+			vault: this.app.vault,
+			localFs: () => this.localFs,
+			remoteFs: () => this.backendManager.getRemoteFs(),
+			stateStore: this.orchestrator.state,
+			localTracker: this.localTracker,
+			orchestrator: this.orchestrator,
+			autoSyncIntervalMinutes: () => this.settings.autoSyncIntervalMinutes,
+			isExcluded: (path) => this.orchestrator.isExcluded(path),
+			registerEvent: (ref) => this.registerEvent(ref),
+			registerInterval: (id) => this.registerInterval(id),
+			register: (cb) => this.register(cb),
 		});
 
 		this.settingTab = new SmartSyncSettingTab(this.app, this);
@@ -135,53 +145,16 @@ export default class SmartSyncPlugin extends Plugin {
 		this.statusBarEl = this.addStatusBarItem();
 		this.updateStatusBar();
 
-		// Event-driven sync with debounce
-		const debouncedSync = debounce(
-			() => {
-				void this.runSync();
-			},
-			DEBOUNCE_MS,
-			false
-		);
-
-		const onVaultChange = (file: TAbstractFile) => {
-			if (this.syncService.shouldSync() && !this.syncService.isExcluded(file.path)) {
-				debouncedSync();
-			}
-		};
-		this.registerEvent(this.app.vault.on("create", onVaultChange));
-		this.registerEvent(this.app.vault.on("modify", onVaultChange));
-		this.registerEvent(this.app.vault.on("delete", onVaultChange));
-		this.registerEvent(this.app.vault.on("rename", onVaultChange));
-
-		// Sync on network reconnect
-		const onOnline = () => {
-			if (this.syncService.shouldSync()) {
-				void this.runSync();
-			}
-		};
-		window.addEventListener("online", onOnline);
-		this.register(() => window.removeEventListener("online", onOnline));
-
-		// Sync when app returns to foreground (especially important on mobile)
-		const onVisibilityChange = () => {
-			if (document.visibilityState === "visible" && this.syncService.shouldSync()) {
-				debouncedSync();
-			}
-		};
-		document.addEventListener("visibilitychange", onVisibilityChange);
-		this.register(() => document.removeEventListener("visibilitychange", onVisibilityChange));
-
-		// Auto-sync timer
-		this.setupAutoSync();
+		this.scheduler.start();
 	}
 
 	onunload() {
 		void this.logger.flush();
 		this.logger.dispose();
 		this.backendManager.close();
-		this.syncService.close().catch((e) => {
-			this.logger.error("Failed to close sync service", { message: e instanceof Error ? e.message : String(e) });
+		this.scheduler.destroy();
+		this.orchestrator.close().catch((e) => {
+			this.logger.error("Failed to close orchestrator", { message: e instanceof Error ? e.message : String(e) });
 		});
 	}
 
@@ -200,6 +173,13 @@ export default class SmartSyncPlugin extends Plugin {
 			needsSave = true;
 		}
 
+		// Migrate legacy conflict strategies to v2 values
+		const migrated = migrateConflictStrategy(this.settings.conflictStrategy);
+		if (migrated !== this.settings.conflictStrategy) {
+			this.settings.conflictStrategy = migrated;
+			needsSave = true;
+		}
+
 		if (needsSave) {
 			await this.saveData(this.settings);
 		}
@@ -209,23 +189,9 @@ export default class SmartSyncPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	/** Set up or restart the auto-sync interval */
+	/** Restart the auto-sync interval (called from settings UI) */
 	setupAutoSync(): void {
-		if (this.autoSyncIntervalId !== null) {
-			window.clearInterval(this.autoSyncIntervalId);
-			this.autoSyncIntervalId = null;
-		}
-
-		const minutes = this.settings.autoSyncIntervalMinutes;
-		if (minutes > 0) {
-			this.autoSyncIntervalId = this.registerInterval(
-				window.setInterval(() => {
-					if (this.syncService.shouldSync()) {
-						void this.runSync();
-					}
-				}, minutes * 60 * 1000)
-			);
-		}
+		this.scheduler.restartAutoSync();
 	}
 
 	async runSync(): Promise<void> {
@@ -239,7 +205,7 @@ export default class SmartSyncPlugin extends Plugin {
 					return;
 				}
 			}
-			await this.syncService.runSync();
+			await this.orchestrator.runSync();
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			this.syncStatus = "error";

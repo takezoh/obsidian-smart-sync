@@ -11,7 +11,7 @@ describe("applyIncrementalChanges", () => {
 	let listChanges: ReturnType<typeof vi.fn>;
 	let getPathById: ReturnType<typeof vi.fn>;
 	let collectDescendants: ReturnType<typeof vi.fn>;
-	let removePath: ReturnType<typeof vi.fn>;
+	let removeTree: ReturnType<typeof vi.fn>;
 	let applyFileChange: ReturnType<typeof vi.fn>;
 	let loggerInfo: ReturnType<typeof vi.fn>;
 	let loggerWarn: ReturnType<typeof vi.fn>;
@@ -23,7 +23,7 @@ describe("applyIncrementalChanges", () => {
 		listChanges = vi.fn();
 		getPathById = vi.fn();
 		collectDescendants = vi.fn().mockReturnValue([]);
-		removePath = vi.fn();
+		removeTree = vi.fn();
 		applyFileChange = vi.fn();
 		loggerInfo = vi.fn();
 		loggerWarn = vi.fn();
@@ -32,7 +32,7 @@ describe("applyIncrementalChanges", () => {
 		mockCache = {
 			getPathById,
 			collectDescendants,
-			removePath,
+			removeTree,
 			applyFileChange,
 		} as unknown as DriveMetadataCache;
 
@@ -69,6 +69,7 @@ describe("applyIncrementalChanges", () => {
 		expect(result).toEqual({
 			newToken: "new-token-123",
 			needsFullScan: false,
+			changedPaths: new Set(["/test.txt"]),
 		});
 		expect(loggerInfo).toHaveBeenCalledWith("Incremental changes applied", {
 			changeCount: 1,
@@ -83,23 +84,20 @@ describe("applyIncrementalChanges", () => {
 
 		const result = await applyIncrementalChanges(ctx, "expired-token");
 
-		expect(result).toEqual({ needsFullScan: true });
+		expect(result).toEqual({ needsFullScan: true, changedPaths: new Set() });
 		expect(loggerInfo).toHaveBeenCalledWith(
 			"Changes token expired (410), falling back to full scan"
 		);
 	});
 
-	it("falls back to full scan on 401 (unauthorized/invalid page token)", async () => {
+	it("re-throws 401 as auth error (no fallback to full scan)", async () => {
 		const error = new Error("Unauthorized");
 		Object.assign(error, { status: 401 });
 
 		listChanges.mockRejectedValue(error);
 
-		const result = await applyIncrementalChanges(ctx, "invalid-token");
-
-		expect(result).toEqual({ needsFullScan: true });
-		expect(loggerWarn).toHaveBeenCalledWith(
-			"listChanges returned 401 — page token may be invalid, falling back to full scan"
+		await expect(applyIncrementalChanges(ctx, "invalid-token")).rejects.toThrow(
+			"Unauthorized"
 		);
 	});
 

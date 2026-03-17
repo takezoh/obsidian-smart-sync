@@ -13,6 +13,10 @@ export interface IncrementalSyncContext {
 	logger?: Logger;
 }
 
+export type IncrementalChangesResult =
+	| { needsFullScan: false; newToken: string; changedPaths: Set<string> }
+	| { needsFullScan: true; changedPaths: Set<string> };
+
 /**
  * Apply incremental changes from the Drive changes.list API.
  * Updates the metadata cache and returns the new page token.
@@ -23,7 +27,7 @@ export interface IncrementalSyncContext {
 export async function applyIncrementalChanges(
 	ctx: IncrementalSyncContext,
 	changesPageToken: string,
-): Promise<{ newToken: string; needsFullScan: false } | { needsFullScan: true }> {
+): Promise<IncrementalChangesResult> {
 	try {
 		let pageToken: string | undefined;
 		let currentToken = changesPageToken;
@@ -31,6 +35,7 @@ export async function applyIncrementalChanges(
 		let totalChanges = 0;
 		const updatedRecords: { path: string; file: DriveFile; isFolder: boolean }[] = [];
 		const deletedPaths: string[] = [];
+		const changedPaths = new Set<string>();
 
 		do {
 			const result = await ctx.client.listChanges(
@@ -60,8 +65,11 @@ export async function applyIncrementalChanges(
 					const path = ctx.cache.getPathById(change.fileId);
 					if (path) {
 						// Collect descendants before removing
-						deletedPaths.push(path, ...ctx.cache.collectDescendants(path));
-						ctx.cache.removePath(path);
+						const descendants = ctx.cache.collectDescendants(path);
+						deletedPaths.push(path, ...descendants);
+						changedPaths.add(path);
+						for (const d of descendants) changedPaths.add(d);
+						ctx.cache.removeTree(path);
 					}
 				} else if (change.file) {
 					ctx.cache.applyFileChange(change.file);
@@ -72,6 +80,7 @@ export async function applyIncrementalChanges(
 							file: change.file,
 							isFolder: change.file.mimeType === FOLDER_MIME,
 						});
+						changedPaths.add(updatedPath);
 					}
 				}
 			}
@@ -87,17 +96,12 @@ export async function applyIncrementalChanges(
 			void persistIncrementalChanges(ctx, updatedRecords, deletedPaths, currentToken);
 		}
 
-		return { newToken: currentToken, needsFullScan: false };
+		return { newToken: currentToken, needsFullScan: false, changedPaths };
 	} catch (err) {
 		if (isHttpError(err, 410)) {
 			// Token expired, fall back to full scan
 			ctx.logger?.info("Changes token expired (410), falling back to full scan");
-			return { needsFullScan: true };
-		}
-		if (isHttpError(err, 401)) {
-			// Page token may be invalid, fall back to full scan
-			ctx.logger?.warn("listChanges returned 401 — page token may be invalid, falling back to full scan");
-			return { needsFullScan: true };
+			return { needsFullScan: true, changedPaths: new Set<string>() };
 		}
 		throw err;
 	}

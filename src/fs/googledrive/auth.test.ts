@@ -151,6 +151,49 @@ describe("GoogleAuth.getAccessToken concurrency", () => {
 		mockRequestUrl.mockRestore();
 	});
 
+	it("retries refresh after cooldown period elapses", async () => {
+		let callCount = 0;
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
+			async () => {
+				callCount++;
+				if (callCount === 1) {
+					const err = new Error("Request failed, status 400");
+					(err as Error & { status: number }).status = 400;
+					throw err;
+				}
+				return await Promise.resolve(mockRes({
+					access_token: "recovered",
+					expires_in: 3600,
+					token_type: "Bearer",
+				}));
+			}
+		);
+
+		const { GoogleAuth } = await import("./auth");
+		const auth = new GoogleAuth();
+		auth.setTokens("refresh-token", "", 0);
+
+		const now = Date.now();
+		const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+
+		await expect(auth.getAccessToken()).rejects.toThrow("status 400");
+		expect(callCount).toBe(1);
+
+		// Within cooldown: short-circuits
+		dateNowSpy.mockReturnValue(now + 30_000);
+		await expect(auth.getAccessToken()).rejects.toThrow("Authentication expired");
+		expect(callCount).toBe(1);
+
+		// After cooldown: retries and succeeds
+		dateNowSpy.mockReturnValue(now + 60_001);
+		const token = await auth.getAccessToken();
+		expect(token).toBe("recovered");
+		expect(callCount).toBe(2);
+
+		dateNowSpy.mockRestore();
+		mockRequestUrl.mockRestore();
+	});
+
 	it("resets authFailed when setTokens is called", async () => {
 		let callCount = 0;
 		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(
