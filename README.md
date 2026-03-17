@@ -9,12 +9,14 @@ Currently supports Google Drive as a storage backend.
 ## Features
 
 - **Bidirectional sync**: Push local changes to remote, pull remote changes to local
-- **Auto-sync**: Runs at a configurable interval (default 5 min). Also triggers automatically on vault file changes
-- **Conflict detection**: Accurately detects local and remote changes, even when both sides are edited
-- **Conflict resolution**: 6 strategies — keep_newer / keep_local / keep_remote / duplicate / 3-way merge / ask (manual)
-- **3-way merge**: For concurrent edits on text files (Markdown, etc.), automatically merges changes
+- **Auto-sync**: Triggers on vault file changes (5 s debounce), app foreground, network restore, and configurable interval
+- **Incremental sync**: After the initial full scan, only changed files are synced (hot/warm detection)
+- **Conflict detection**: 3-state comparison (local / remote / last sync record) accurately detects changes even when both sides are edited
+- **Conflict resolution**: 3 strategies — auto merge (3-way merge → keep newer fallback) / duplicate / ask
+- **3-way merge**: For concurrent edits on text files, automatically merges changes using the last-synced content as a base
+- **Active file priority sync**: When opening a file, immediately pulls the latest version if remote has changed
 - **Exclude patterns**: Specify files/folders to exclude via glob patterns (e.g. `*.zip`, `large-assets/**`)
-- **Status bar**: Real-time sync status display (Synced / Syncing... / Sync error / Not connected)
+- **Status bar**: Real-time sync status display (synced / syncing / error / not connected)
 - **Ribbon icon**: One-click manual sync
 
 ## Google Drive setup
@@ -27,7 +29,7 @@ Currently supports Google Drive as a storage backend.
 
 If the automatic callback fails, try disconnecting and reconnecting from the plugin settings.
 
-The first sync after connecting performs a full scan of the Drive folder. This may take some time depending on vault size. Subsequent syncs fetch only changes and are much faster.
+The first sync after connecting performs a full scan of the Drive folder. This may take some time depending on vault size. Subsequent syncs use incremental change detection and are much faster.
 
 ### Custom OAuth (advanced)
 
@@ -54,29 +56,27 @@ The default redirect page (`https://smartsync.takezo.dev/callback`) is a [single
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Backend | Storage backend for sync | Google Drive (or Google Drive custom OAuth) |
-| Auto-sync interval | Sync interval in minutes (0 to disable) | 5 |
-| Conflict strategy | Resolution strategy for conflicts | keep_newer |
-| Enable 3-way merge | Enable 3-way merge for text files | On |
+| Auto-sync interval | Periodic sync interval in minutes (0 to disable). Vault changes, app foreground, and network restore also trigger sync independently. | 5 |
+| Conflict strategy | Resolution strategy for conflicts (see below) | Auto merge |
 | Dot-prefixed paths to sync | Dot-prefixed folders to include in sync (e.g. `.templates`) | (none) |
 | Ignore patterns | Glob patterns to exclude (one per line) | Desktop: (none), Mobile: `.md`/`.canvas`/`.base` only |
 | Mobile max file size | Skip files larger than this on mobile | 10 MB |
+| Enable logging | Write sync logs to `.smartsync/` in your vault | Off |
+| Log level | Minimum log level (debug / info / warn / error) | info |
 
 ### Conflict resolution strategies
 
 | Strategy | Behavior |
 |----------|----------|
-| `keep_newer` | Keeps the version with the more recent timestamp |
-| `keep_local` | Always keeps local changes |
-| `keep_remote` | Always keeps remote changes |
-| `duplicate` | Saves the remote version as a `.conflict` file, keeps local as-is |
-| `three_way_merge` | Attempts 3-way merge (text files only, up to 1 MB). Falls back on failure |
-| `ask` | Shows a modal for each conflict. Displays a summary modal for 5+ conflicts |
+| Auto merge (recommended) | Attempts 3-way merge for text files using the last-synced content as the base. If merge is not possible (binary file, no base content, or merge failure), falls back to keep newer (by mtime). If mtime is equal or unknown, creates a duplicate. |
+| Duplicate | Always saves the remote version as a `.conflict` file and keeps the local version at the original path. |
+| Ask | Shows a modal for each conflict, letting you choose keep local, keep remote, or duplicate. |
 
 ### Syncing the config directory
 
 If you want to try syncing Obsidian's config directory (`.obsidian/`), add it to **Dot-prefixed paths to sync** and use **Ignore patterns** to select what to include.
 
-> **⚠️ Warning**: The config directory contains Obsidian's internal metadata. Syncing it across devices may cause settings loss, layout corruption, or plugin malfunction.
+> **Warning**: The config directory contains Obsidian's internal metadata. Syncing it across devices may cause settings loss, layout corruption, or plugin malfunction.
 
 Example:
 
