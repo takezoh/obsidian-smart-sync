@@ -18,6 +18,31 @@ import { buildSyncRecord } from "./state-committer";
 
 export type { SyncStatus };
 
+interface SyncCycleResult {
+	result: ExecutionResult;
+	succeeded: number;
+	failed: number;
+	conflicts: number;
+}
+
+function buildNotificationMessage(cycle: SyncCycleResult): string {
+	const counts = { pushed: 0, pulled: 0, matched: 0, deleted: 0 };
+	for (const a of cycle.result.succeeded) {
+		if (a.action.action === "push") counts.pushed++;
+		else if (a.action.action === "pull") counts.pulled++;
+		else if (a.action.action === "match") counts.matched++;
+		else if (a.action.action === "delete_local" || a.action.action === "delete_remote") counts.deleted++;
+	}
+	const parts: string[] = [];
+	if (counts.pushed > 0) parts.push(`${counts.pushed} pushed`);
+	if (counts.pulled > 0) parts.push(`${counts.pulled} pulled`);
+	if (counts.matched > 0) parts.push(`${counts.matched} matched`);
+	if (counts.deleted > 0) parts.push(`${counts.deleted} deleted`);
+	if (cycle.conflicts > 0) parts.push(`${cycle.conflicts} conflicts`);
+	if (cycle.failed > 0) parts.push(`${cycle.failed} errors`);
+	return parts.length === 0 ? "Everything up to date" : `Sync: ${parts.join(", ")}`;
+}
+
 export interface SyncOrchestratorDeps {
 	getSettings: () => SmartSyncSettings;
 	saveSettings: () => Promise<void>;
@@ -100,115 +125,81 @@ export class SyncOrchestrator {
 				this.deps.onStatusChange("syncing");
 				this.deps.logger?.info("Sync started");
 
-				let lastError: unknown = null;
-				let succeeded = 0;
-				let failed = 0;
-				let conflicts = 0;
-				let lastResult: ExecutionResult | null = null;
+				const result = await this.executeWithRetry();
+				if (!result) return; // Fatal error already handled
 
-				for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-					try {
-						lastResult = await this.executeSyncOnce();
-						succeeded = lastResult.succeeded.length;
-						failed = lastResult.failed.length;
-						conflicts = lastResult.conflicts.length;
-						lastError = null;
-						break;
-					} catch (err) {
-						lastError = err;
-						const { status, retryAfter } = getErrorInfo(err);
-						this.deps.logger?.error(
-							`Sync error (attempt ${attempt}/${MAX_RETRIES})`,
-							{ status, message: err instanceof Error ? err.message : String(err) },
-						);
-
-						if (err instanceof AuthError) {
-							this.deps.onStatusChange("error");
-							this.deps.notify(
-								"Authentication error. Please reconnect in settings."
-							);
-							return;
-						}
-						if (status === 403 && !isRateLimitError(err)) {
-							this.deps.onStatusChange("error");
-							this.deps.notify(
-								"Permission denied. Please check your Google Drive permissions."
-							);
-							return;
-						}
-						if (status === 404) {
-							break;
-						}
-
-						if (attempt === MAX_RETRIES) break;
-
-						let delay: number;
-						if ((status === 429 || status === 403) && retryAfter !== null) {
-							delay = retryAfter * 1000;
-						} else {
-							const base = Math.pow(2, attempt - 1) * 1000;
-							delay = base * (0.5 + Math.random());
-						}
-						await sleep(delay);
-					}
-				}
-
-				if (lastError) {
-					this.deps.onStatusChange("error");
-					const msg =
-						lastError instanceof Error ? lastError.message : "Unknown error";
-					this.deps.notify(`Sync error: ${msg}`);
-					this.deps.logger?.error("Sync failed after retries", { message: msg });
-					await this.deps.logger?.flush();
-					return;
-				}
-
+				const { succeeded, failed, conflicts } = result;
 				if (failed > 0) {
 					this.deps.onStatusChange("partial_error");
-					this.deps.logger?.warn("Sync completed with errors", {
-						succeeded,
-						conflicts,
-						failed,
-					});
+					this.deps.logger?.warn("Sync completed with errors", { succeeded, conflicts, failed });
 				} else {
 					this.deps.onStatusChange("idle");
-					this.deps.logger?.info("Sync completed", {
-						succeeded,
-						conflicts,
-						failed,
-					});
+					this.deps.logger?.info("Sync completed", { succeeded, conflicts, failed });
 				}
 
-				const counts = { pushed: 0, pulled: 0, matched: 0, deleted: 0 };
-				if (lastResult) {
-					for (const a of lastResult.succeeded) {
-						if (a.action.action === "push") counts.pushed++;
-						else if (a.action.action === "pull") counts.pulled++;
-						else if (a.action.action === "match") counts.matched++;
-						else if (a.action.action === "delete_local" || a.action.action === "delete_remote") counts.deleted++;
-					}
-				}
-				const parts: string[] = [];
-				if (counts.pushed > 0) parts.push(`${counts.pushed} pushed`);
-				if (counts.pulled > 0) parts.push(`${counts.pulled} pulled`);
-				if (counts.matched > 0) parts.push(`${counts.matched} matched`);
-				if (counts.deleted > 0) parts.push(`${counts.deleted} deleted`);
-				if (conflicts > 0) parts.push(`${conflicts} conflicts`);
-				if (failed > 0) parts.push(`${failed} errors`);
-
-				if (parts.length === 0) {
-					this.deps.notify("Everything up to date");
-				} else {
-					this.deps.notify(`Sync: ${parts.join(", ")}`);
-				}
-
+				this.deps.notify(buildNotificationMessage(result));
 				await this.deps.logger?.flush();
 
-				// Acknowledge all paths after sync
 				const allPaths = this.deps.localTracker.getDirtyPaths();
 				this.deps.localTracker.acknowledge(allPaths);
 			} while (this.syncPending);
 		});
+	}
+
+	/**
+	 * Execute sync with retry logic. Returns null on fatal error (already reported).
+	 */
+	private async executeWithRetry(): Promise<SyncCycleResult | null> {
+		let lastError: unknown = null;
+		let lastResult: ExecutionResult | null = null;
+
+		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			try {
+				lastResult = await this.executeSyncOnce();
+				return {
+					result: lastResult,
+					succeeded: lastResult.succeeded.length,
+					failed: lastResult.failed.length,
+					conflicts: lastResult.conflicts.length,
+				};
+			} catch (err) {
+				lastError = err;
+				const { status, retryAfter } = getErrorInfo(err);
+				this.deps.logger?.error(
+					`Sync error (attempt ${attempt}/${MAX_RETRIES})`,
+					{ status, message: err instanceof Error ? err.message : String(err) },
+				);
+
+				if (err instanceof AuthError) {
+					this.deps.onStatusChange("error");
+					this.deps.notify("Authentication error. Please reconnect in settings.");
+					return null;
+				}
+				if (status === 403 && !isRateLimitError(err)) {
+					this.deps.onStatusChange("error");
+					this.deps.notify("Permission denied. Please check your Google Drive permissions.");
+					return null;
+				}
+				if (status === 404) break;
+				if (attempt === MAX_RETRIES) break;
+
+				let delay: number;
+				if ((status === 429 || status === 403) && retryAfter !== null) {
+					delay = retryAfter * 1000;
+				} else {
+					const base = Math.pow(2, attempt - 1) * 1000;
+					delay = base * (0.5 + Math.random());
+				}
+				await sleep(delay);
+			}
+		}
+
+		this.deps.onStatusChange("error");
+		const msg = lastError instanceof Error ? lastError.message : "Unknown error";
+		this.deps.notify(`Sync error: ${msg}`);
+		this.deps.logger?.error("Sync failed after retries", { message: msg });
+		await this.deps.logger?.flush();
+		return null;
 	}
 
 	async pullSingle(path: string): Promise<void> {
