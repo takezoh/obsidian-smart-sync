@@ -3,7 +3,9 @@ import { collectChanges } from "./change-detector";
 import type { ChangeDetectorDeps } from "./change-detector";
 import { LocalChangeTracker } from "./local-tracker";
 import { createMockFs, createMockStateStore, addFile } from "../__mocks__/sync-test-helpers";
+import type { FileEntity } from "../fs/types";
 import type { SyncRecord } from "./types";
+import { md5 } from "../utils/md5";
 
 function makeRecord(path: string, overrides: Partial<SyncRecord> = {}): SyncRecord {
 	return {
@@ -34,6 +36,19 @@ describe("collectChanges — temperature selection", () => {
 		stateStore = createMockStateStore();
 		localTracker = new LocalChangeTracker();
 	});
+
+	/** Add a file to mock FS with backendMeta (e.g. contentChecksum) */
+	function addFileWithMeta(
+		fs: ReturnType<typeof createMockFs>,
+		path: string,
+		text: string,
+		mtime: number,
+		backendMeta: Record<string, unknown>,
+	): FileEntity {
+		const entity = addFile(fs, path, text, mtime);
+		entity.backendMeta = backendMeta;
+		return entity;
+	}
 
 	describe("cold path", () => {
 		it("returns cold when stateStore is empty", async () => {
@@ -71,6 +86,67 @@ describe("collectChanges — temperature selection", () => {
 			const result = await collectChanges(makeDeps());
 			expect(result.temperature).toBe("cold");
 			expect(result.entries).toHaveLength(0);
+		});
+
+		it("enriches hashes when local MD5 matches remote contentChecksum", async () => {
+			const content = "identical content";
+			const contentBuf = new TextEncoder().encode(content);
+			const expectedMd5 = md5(contentBuf.buffer as ArrayBuffer);
+
+			addFile(localFs, "a.md", content, 1000);
+			addFileWithMeta(remoteFs, "a.md", content, 2000, {
+				contentChecksum: expectedMd5,
+			});
+
+			const result = await collectChanges(makeDeps());
+
+			const entry = result.entries.find((e) => e.path === "a.md");
+			expect(entry?.local?.hash).toBe(`md5:${expectedMd5}`);
+			expect(entry?.remote?.hash).toBe(`md5:${expectedMd5}`);
+		});
+
+		it("does not enrich hashes when MD5 differs", async () => {
+			addFile(localFs, "a.md", "local version", 1000);
+			addFileWithMeta(remoteFs, "a.md", "remote version", 2000, {
+				contentChecksum: "differentmd5hash",
+			});
+			// Force same size so enrichment is attempted
+			const localEntity = localFs.files.get("a.md")!.entity;
+			const remoteEntity = remoteFs.files.get("a.md")!.entity;
+			remoteEntity.size = localEntity.size;
+
+			const result = await collectChanges(makeDeps());
+
+			const entry = result.entries.find((e) => e.path === "a.md");
+			expect(entry?.local?.hash).toBe("");
+			expect(entry?.remote?.hash).toBe("");
+		});
+
+		it("skips enrichment when sizes differ", async () => {
+			const content = "same content";
+			const expectedMd5 = md5(new TextEncoder().encode(content).buffer as ArrayBuffer);
+
+			addFile(localFs, "a.md", content, 1000);
+			addFileWithMeta(remoteFs, "a.md", "different length content here", 2000, {
+				contentChecksum: expectedMd5,
+			});
+
+			const result = await collectChanges(makeDeps());
+
+			const entry = result.entries.find((e) => e.path === "a.md");
+			expect(entry?.local?.hash).toBe("");
+			expect(entry?.remote?.hash).toBe("");
+		});
+
+		it("skips enrichment when remote has no contentChecksum", async () => {
+			addFile(localFs, "a.md", "content", 1000);
+			addFile(remoteFs, "a.md", "content", 2000);
+
+			const result = await collectChanges(makeDeps());
+
+			const entry = result.entries.find((e) => e.path === "a.md");
+			expect(entry?.local?.hash).toBe("");
+			expect(entry?.remote?.hash).toBe("");
 		});
 	});
 
