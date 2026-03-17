@@ -14,10 +14,8 @@ export interface SyncRecord {
 	localSize: number;
 	/** Remote file size at last successful sync */
 	remoteSize: number;
-	/** Backend-specific metadata snapshot (e.g. Drive file ID) */
+	/** Backend-specific metadata snapshot (e.g. Drive contentChecksum) */
 	backendMeta?: Record<string, unknown>;
-	/** Drive md5Checksum (promoted from backendMeta.contentChecksum) */
-	backendChecksum?: string;
 	/** Timestamp when this sync completed (Unix epoch ms) */
 	syncedAt: number;
 }
@@ -30,22 +28,13 @@ export interface MixedEntity {
 	prevSync?: SyncRecord;
 }
 
-/** Possible sync decisions */
-export type DecisionType =
-	| "local_created_push"
-	| "remote_created_pull"
-	| "local_modified_push"
-	| "remote_modified_pull"
-	| "local_deleted_propagate"
-	| "remote_deleted_propagate"
-	| "initial_match"
-	| "conflict_both_modified"
-	| "conflict_both_created"
-	| "conflict_delete_vs_modify"
-	| "both_deleted_cleanup"
-	| "no_action";
-
-/** Strategy for resolving conflicts */
+/**
+ * Strategy for resolving conflicts.
+ *
+ * v2 simplified strategies: auto_merge, duplicate, ask
+ * Legacy strategies (keep_newer, keep_local, keep_remote, three_way_merge)
+ * are retained for conflict.ts internal use and migration support.
+ */
 export type ConflictStrategy =
 	| "keep_newer"
 	| "keep_local"
@@ -55,19 +44,10 @@ export type ConflictStrategy =
 	| "auto_merge"
 	| "ask";
 
-/** A computed sync decision for a single path */
-export interface SyncDecision {
-	path: string;
-	decision: DecisionType;
-	local?: FileEntity;
-	remote?: FileEntity;
-	prevSync?: SyncRecord;
-}
-
 /** A record of a conflict resolution for audit/history purposes */
 export interface ConflictRecord {
 	path: string;
-	decisionType: DecisionType;
+	actionType: SyncActionType;
 	strategy: ConflictStrategy;
 	action: "kept_local" | "kept_remote" | "duplicated" | "merged";
 	local?: FileEntity;
@@ -77,6 +57,9 @@ export interface ConflictRecord {
 	resolvedAt: string;
 	sessionId: string;
 }
+
+/** Sync service status */
+export type SyncStatus = "idle" | "syncing" | "error" | "partial_error" | "not_connected";
 
 /** v2 pipeline: action types */
 export type SyncActionType =

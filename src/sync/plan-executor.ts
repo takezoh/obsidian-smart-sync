@@ -64,7 +64,7 @@ export async function executePlan(
 	}
 
 	if (plan.safetyCheck.requiresConfirmation && !ctx.onConfirmation) {
-		console.warn("executePlan: requiresConfirmation is true but no onConfirmation callback provided — proceeding without confirmation");
+		ctx.logger?.warn("executePlan: requiresConfirmation is true but no onConfirmation callback provided — proceeding without confirmation");
 	}
 
 	if (plan.safetyCheck.requiresConfirmation && ctx.onConfirmation) {

@@ -1,5 +1,6 @@
 import { App, Modal, Setting } from "obsidian";
-import type { ConflictStrategy, SyncDecision } from "../sync/types";
+import type { SyncAction } from "../sync/types";
+import type { SimplifiedConflictStrategy } from "../sync/conflict-resolver";
 
 export type SummaryChoice = "keep_all_local" | "keep_all_remote" | "resolve_individually";
 
@@ -8,10 +9,10 @@ export type SummaryChoice = "keep_all_local" | "keep_all_remote" | "resolve_indi
  * choose a bulk resolution strategy or opt for per-file resolution.
  */
 export class ConflictSummaryModal extends Modal {
-	private conflicts: SyncDecision[];
+	private conflicts: SyncAction[];
 	private resolvePromise: ((choice: SummaryChoice) => void) | null = null;
 
-	constructor(app: App, conflicts: SyncDecision[]) {
+	constructor(app: App, conflicts: SyncAction[]) {
 		super(app);
 		this.conflicts = conflicts;
 	}
@@ -34,7 +35,6 @@ export class ConflictSummaryModal extends Modal {
 			cls: "smart-sync-summary-desc",
 		});
 
-		// List conflicting files
 		const listEl = contentEl.createEl("ul", { cls: "smart-sync-summary-list" });
 		const maxDisplay = 10;
 		const displayed = this.conflicts.slice(0, maxDisplay);
@@ -84,18 +84,17 @@ export class ConflictSummaryModal extends Modal {
 	onClose() {
 		const { contentEl } = this;
 		contentEl.empty();
-		// Default to individual resolution if closed without choosing
 		this.resolvePromise?.("resolve_individually");
 	}
 }
 
-/** Map a summary choice to a ConflictStrategy override, or null for per-file */
-export function summaryChoiceToStrategy(choice: SummaryChoice): ConflictStrategy | null {
+/** Map a summary choice to a SimplifiedConflictStrategy override, or null for per-file */
+export function summaryChoiceToStrategy(choice: SummaryChoice): SimplifiedConflictStrategy | null {
 	switch (choice) {
 		case "keep_all_local":
-			return "keep_local";
+			return "duplicate";
 		case "keep_all_remote":
-			return "keep_remote";
+			return "duplicate";
 		case "resolve_individually":
 			return null;
 	}

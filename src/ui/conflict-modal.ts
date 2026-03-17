@@ -1,23 +1,24 @@
 import { App, Modal, Setting } from "obsidian";
-import type { ConflictStrategy, SyncDecision } from "../sync/types";
+import type { SyncAction } from "../sync/types";
+import type { SimplifiedConflictStrategy } from "../sync/conflict-resolver";
 
-type ConflictChoice = "keep_local" | "keep_remote" | "duplicate" | "three_way_merge";
+type ConflictChoice = "keep_local" | "keep_remote" | "duplicate";
 
 /**
  * Modal that presents conflict resolution options to the user.
  * Returns a Promise that resolves with the user's chosen strategy.
  */
 export class ConflictModal extends Modal {
-	private decision: SyncDecision;
-	private resolvePromise: ((strategy: ConflictStrategy) => void) | null = null;
+	private action: SyncAction;
+	private resolvePromise: ((strategy: SimplifiedConflictStrategy) => void) | null = null;
 
-	constructor(app: App, decision: SyncDecision) {
+	constructor(app: App, action: SyncAction) {
 		super(app);
-		this.decision = decision;
+		this.action = action;
 	}
 
 	/** Open the modal and wait for the user to choose */
-	waitForResolution(): Promise<ConflictStrategy> {
+	waitForResolution(): Promise<SimplifiedConflictStrategy> {
 		return new Promise((resolve) => {
 			this.resolvePromise = resolve;
 			this.open();
@@ -31,28 +32,27 @@ export class ConflictModal extends Modal {
 		contentEl.createEl("h3", { text: "Resolve sync conflict" });
 
 		contentEl.createEl("p", {
-			text: `Both local and remote versions of "${this.decision.path}" have changed.`,
+			text: `Both local and remote versions of "${this.action.path}" have changed.`,
 			cls: "smart-sync-conflict-desc",
 		});
 
-		// Show file info
-		if (this.decision.local) {
+		if (this.action.local) {
 			const localInfo = contentEl.createEl("div", {
 				cls: "smart-sync-conflict-info",
 			});
 			localInfo.createEl("strong", { text: "Local: " });
 			localInfo.createEl("span", {
-				text: `${formatSize(this.decision.local.size)}, modified ${formatDate(this.decision.local.mtime)}`,
+				text: `${formatSize(this.action.local.size)}, modified ${formatDate(this.action.local.mtime)}`,
 			});
 		}
 
-		if (this.decision.remote) {
+		if (this.action.remote) {
 			const remoteInfo = contentEl.createEl("div", {
 				cls: "smart-sync-conflict-info",
 			});
 			remoteInfo.createEl("strong", { text: "Remote: " });
 			remoteInfo.createEl("span", {
-				text: `${formatSize(this.decision.remote.size)}, modified ${formatDate(this.decision.remote.mtime)}`,
+				text: `${formatSize(this.action.remote.size)}, modified ${formatDate(this.action.remote.mtime)}`,
 			});
 		}
 
@@ -71,13 +71,8 @@ export class ConflictModal extends Modal {
 			},
 			{
 				value: "duplicate",
-				label: "Create duplicate",
-				desc: "Keep both versions. The remote version is saved with a .conflict suffix.",
-			},
-			{
-				value: "three_way_merge",
-				label: "Attempt merge",
-				desc: "Try to merge changes automatically (text files only).",
+				label: "Keep both",
+				desc: "Save both versions — remote is kept with a .conflict suffix.",
 			},
 		];
 
@@ -89,7 +84,7 @@ export class ConflictModal extends Modal {
 					button
 						.setButtonText("Choose")
 						.onClick(() => {
-							this.resolvePromise?.(choice.value);
+							this.resolvePromise?.("ask");
 							this.close();
 						})
 				);
@@ -99,8 +94,8 @@ export class ConflictModal extends Modal {
 	onClose() {
 		const { contentEl } = this;
 		contentEl.empty();
-		// If closed without choosing, default to keep_newer
-		this.resolvePromise?.("keep_newer");
+		// If closed without choosing, default to duplicate (safest)
+		this.resolvePromise?.("duplicate");
 	}
 }
 

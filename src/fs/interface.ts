@@ -100,14 +100,4 @@ export interface IFileSystem {
 	 * Called on plugin unload. Optional — not all backends need cleanup.
 	 */
 	close?(): Promise<void>;
-
-	/**
-	 * Return paths changed since the last call (delta tracking).
-	 *
-	 * Returns `null` when delta tracking is unavailable or the cursor has expired.
-	 * In that case the caller should fall back to a full listing.
-	 *
-	 * Optional — backends that do not support delta tracking omit this method.
-	 */
-	getChangedPaths?(): Promise<{ modified: string[]; deleted: string[] } | null>;
 }

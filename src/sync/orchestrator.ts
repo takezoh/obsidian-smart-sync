@@ -13,7 +13,7 @@ import type { ExecutionContext } from "./plan-executor";
 import type { SimplifiedConflictStrategy } from "./conflict-resolver";
 import { AuthError } from "../fs/errors";
 import { getErrorInfo, isRateLimitError, sleep } from "./error";
-import type { SyncStatus } from "./service";
+import type { SyncStatus } from "./types";
 import { buildSyncRecord } from "./state-committer";
 
 export type { SyncStatus };
