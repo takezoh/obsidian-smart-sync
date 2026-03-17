@@ -9,7 +9,7 @@ import { LocalChangeTracker } from "./local-tracker";
 import { collectChanges } from "./change-detector";
 import { planSync } from "./decision-engine";
 import { executePlan } from "./plan-executor";
-import type { ExecutionContext } from "./plan-executor";
+import type { ExecutionContext, ExecutionResult } from "./plan-executor";
 import type { SimplifiedConflictStrategy } from "./conflict-resolver";
 import { AuthError } from "../fs/errors";
 import { getErrorInfo, isRateLimitError, sleep } from "./error";
@@ -104,13 +104,14 @@ export class SyncOrchestrator {
 				let succeeded = 0;
 				let failed = 0;
 				let conflicts = 0;
+				let lastResult: ExecutionResult | null = null;
 
 				for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 					try {
-						const result = await this.executeSyncOnce();
-						succeeded = result.succeeded.length;
-						failed = result.failed.length;
-						conflicts = result.conflicts.length;
+						lastResult = await this.executeSyncOnce();
+						succeeded = lastResult.succeeded.length;
+						failed = lastResult.failed.length;
+						conflicts = lastResult.conflicts.length;
 						lastError = null;
 						break;
 					} catch (err) {
@@ -178,8 +179,20 @@ export class SyncOrchestrator {
 					});
 				}
 
+				const counts = { pushed: 0, pulled: 0, matched: 0, deleted: 0 };
+				if (lastResult) {
+					for (const a of lastResult.succeeded) {
+						if (a.action.action === "push") counts.pushed++;
+						else if (a.action.action === "pull") counts.pulled++;
+						else if (a.action.action === "match") counts.matched++;
+						else if (a.action.action === "delete_local" || a.action.action === "delete_remote") counts.deleted++;
+					}
+				}
 				const parts: string[] = [];
-				if (succeeded > 0) parts.push(`${succeeded} synced`);
+				if (counts.pushed > 0) parts.push(`${counts.pushed} pushed`);
+				if (counts.pulled > 0) parts.push(`${counts.pulled} pulled`);
+				if (counts.matched > 0) parts.push(`${counts.matched} matched`);
+				if (counts.deleted > 0) parts.push(`${counts.deleted} deleted`);
 				if (conflicts > 0) parts.push(`${conflicts} conflicts`);
 				if (failed > 0) parts.push(`${failed} errors`);
 
@@ -252,6 +265,15 @@ export class SyncOrchestrator {
 			localTracker: this.deps.localTracker,
 		});
 
+		this.deps.logger?.info("Change detection completed", {
+			temperature: changeSet.temperature,
+			entries: changeSet.entries.length,
+			localOnly: changeSet.entries.filter((e) => e.local && !e.remote).length,
+			remoteOnly: changeSet.entries.filter((e) => !e.local && e.remote).length,
+			both: changeSet.entries.filter((e) => e.local && e.remote).length,
+			enriched: changeSet.entries.filter((e) => e.local?.hash?.startsWith("md5:")).length,
+		});
+
 		const isMobile = this.deps.isMobile();
 		const maxBytes = settings.mobileMaxFileSizeMB * 1024 * 1024;
 		const filtered = changeSet.entries.filter((e) => {
@@ -272,6 +294,16 @@ export class SyncOrchestrator {
 		}
 
 		const plan = planSync(filtered);
+
+		const actionBreakdown: Record<string, number> = {};
+		for (const a of plan.actions) {
+			actionBreakdown[a.action] = (actionBreakdown[a.action] ?? 0) + 1;
+		}
+		this.deps.logger?.info("Sync plan created", {
+			total: plan.actions.length,
+			...actionBreakdown,
+			safetyCheck: plan.safetyCheck,
+		});
 
 		const total = plan.actions.length;
 

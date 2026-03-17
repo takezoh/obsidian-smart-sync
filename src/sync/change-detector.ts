@@ -31,16 +31,8 @@ export async function collectChanges(deps: ChangeDetectorDeps): Promise<ChangeSe
 	let changeSet: ChangeSet;
 
 	// Determine temperature
-	if (localTracker.isInitialized()) {
-		const dirtyPaths = localTracker.getDirtyPaths();
-		if (dirtyPaths.size > 0) {
-			changeSet = await collectHot(deps);
-		} else {
-			const allRecords = await stateStore.getAll();
-			changeSet = allRecords.length === 0
-				? await collectCold(deps, allRecords)
-				: await collectWarm(deps, allRecords);
-		}
+	if (localTracker.isInitialized() && localTracker.getDirtyPaths().size > 0) {
+		changeSet = await collectHot(deps);
 	} else {
 		const allRecords = await stateStore.getAll();
 		changeSet = allRecords.length === 0
@@ -222,12 +214,16 @@ async function enrichHashesForInitialMatch(
 	await Promise.all(
 		candidates.map((entry) =>
 			pool.run(async () => {
-				const content = await localFs.read(entry.path);
-				const localMd5 = md5(content);
-				const remoteMd5 = entry.remote!.backendMeta!.contentChecksum as string;
-				if (localMd5 === remoteMd5) {
-					entry.local = { ...entry.local!, hash: `md5:${localMd5}` };
-					entry.remote = { ...entry.remote!, hash: `md5:${localMd5}` };
+				try {
+					const content = await localFs.read(entry.path);
+					const localMd5 = md5(content);
+					const remoteMd5 = entry.remote!.backendMeta!.contentChecksum as string;
+					if (localMd5 === remoteMd5) {
+						entry.local = { ...entry.local!, hash: `md5:${localMd5}` };
+						entry.remote = { ...entry.remote!, hash: `md5:${localMd5}` };
+					}
+				} catch {
+					// Skip failed reads — entry stays unenriched (conflict, safe side)
 				}
 			})
 		)
