@@ -16,7 +16,7 @@ interface ResumeCacheEntry {
 
 /** Dependencies injected by DriveClient */
 export interface ResumableUploadDeps {
-	getToken: () => Promise<string>;
+	getToken: (forceRefresh?: boolean) => Promise<string>;
 	request: (
 		operation: string,
 		opts: RequestUrlParam

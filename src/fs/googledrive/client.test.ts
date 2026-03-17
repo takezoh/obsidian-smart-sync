@@ -519,3 +519,59 @@ describe("DriveClient resumable upload", () => {
 		expect(cache.size).toBe(0);
 	});
 });
+
+describe("DriveClient 401 retry", () => {
+	it("retries once with forceRefresh on 401", async () => {
+		let callCount = 0;
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			callCount++;
+			if (callCount === 1) {
+				throw Object.assign(new Error("Unauthorized"), { status: 401 });
+			}
+			return mockRes({ startPageToken: "token123" });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		const result = await client.getChangesStartToken();
+		expect(result).toBe("token123");
+		expect(callCount).toBe(2);
+		expect(getToken).toHaveBeenCalledTimes(2);
+		expect(getToken).toHaveBeenNthCalledWith(1, false);
+		expect(getToken).toHaveBeenNthCalledWith(2, true);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("does not retry more than once on repeated 401", async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			throw Object.assign(new Error("Unauthorized"), { status: 401 });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		await expect(client.getChangesStartToken()).rejects.toThrow("Drive API getChangesStartToken failed");
+		expect(getToken).toHaveBeenCalledTimes(2);
+
+		mockRequestUrl.mockRestore();
+	});
+
+	it("does not retry on non-401 errors", async () => {
+		const mockRequestUrl = (await spyRequestUrl()).mockImplementation(async () => {
+			throw Object.assign(new Error("Server Error"), { status: 500 });
+		});
+
+		const { DriveClient } = await import("./client");
+		const getToken = vi.fn().mockResolvedValue("access");
+		const client = new DriveClient(getToken);
+
+		await expect(client.getChangesStartToken()).rejects.toThrow("Drive API getChangesStartToken failed");
+		expect(getToken).toHaveBeenCalledTimes(1);
+
+		mockRequestUrl.mockRestore();
+	});
+});
