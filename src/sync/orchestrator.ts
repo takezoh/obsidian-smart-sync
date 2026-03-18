@@ -136,7 +136,9 @@ export class SyncOrchestrator {
 					this.deps.logger?.info("Sync completed", { succeeded, conflicts, failed });
 				}
 
-				this.deps.notify(buildNotificationMessage(result));
+				if (this.deps.getSettings().enableLogging) {
+					this.deps.notify(buildNotificationMessage(result));
+				}
 				await this.deps.logger?.flush();
 
 				const allPaths = this.deps.localTracker.getDirtyPaths();
