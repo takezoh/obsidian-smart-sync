@@ -53,6 +53,8 @@ export interface SyncOrchestratorDeps {
 	notify: (message: string, durationMs?: number) => void;
 	/** Returns true when running on mobile (used for mobile sync restrictions) */
 	isMobile: () => boolean;
+	/** Returns true when the backend is in the process of connecting */
+	isBackendConnecting?: () => boolean;
 	localTracker: LocalChangeTracker;
 	logger?: Logger;
 }
@@ -95,10 +97,11 @@ export class SyncOrchestrator {
 	shouldSync(): boolean {
 		const hasRemote = !!this.deps.remoteFs();
 		const isLocked = this.syncMutex.isLocked;
-		if (!hasRemote || isLocked) {
-			this.deps.logger?.debug("shouldSync: skipped", { hasRemote, isLocked });
+		const isConnecting = this.deps.isBackendConnecting?.() ?? false;
+		if (!hasRemote || isLocked || isConnecting) {
+			this.deps.logger?.debug("shouldSync: skipped", { hasRemote, isLocked, isConnecting });
 		}
-		return hasRemote && !isLocked;
+		return hasRemote && !isLocked && !isConnecting;
 	}
 
 	isExcluded(path: string): boolean {
@@ -110,6 +113,11 @@ export class SyncOrchestrator {
 		if (!remoteFs) {
 			this.deps.onStatusChange("not_connected");
 			this.deps.notify("Not connected to a remote backend");
+			return;
+		}
+
+		if (this.deps.isBackendConnecting?.()) {
+			this.deps.logger?.debug("runSync: skipped — backend connecting");
 			return;
 		}
 

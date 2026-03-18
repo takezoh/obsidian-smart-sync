@@ -210,6 +210,23 @@ describe("SyncOrchestrator", () => {
 			await orchestrator.close();
 		});
 
+		it("skips when backend is connecting", async () => {
+			const deps = createDeps({ isBackendConnecting: () => true });
+			const orchestrator = new SyncOrchestrator(deps);
+			await orchestrator.runSync();
+			expect(deps.notify).not.toHaveBeenCalled();
+			expect(deps.onStatusChange).not.toHaveBeenCalled();
+			await orchestrator.close();
+		});
+
+		it("runs normally when backend is not connecting", async () => {
+			const deps = createDeps({ isBackendConnecting: () => false });
+			const orchestrator = new SyncOrchestrator(deps);
+			await orchestrator.runSync();
+			expect(deps.notify).toHaveBeenCalledWith("Everything up to date");
+			await orchestrator.close();
+		});
+
 		it("acknowledges dirty paths after sync", async () => {
 			const deps = createDeps();
 			const localFs = createMockFs("local");
@@ -343,6 +360,32 @@ describe("SyncOrchestrator", () => {
 
 			expect(syncStarted).toBe(true);
 			await orchestrator.close();
+		});
+	});
+
+	describe("shouldSync()", () => {
+		it("returns true when remote is available and not locked or connecting", () => {
+			const deps = createDeps();
+			const orchestrator = new SyncOrchestrator(deps);
+			expect(orchestrator.shouldSync()).toBe(true);
+		});
+
+		it("returns false when remote is null", () => {
+			const deps = createDeps({ remoteFs: () => null });
+			const orchestrator = new SyncOrchestrator(deps);
+			expect(orchestrator.shouldSync()).toBe(false);
+		});
+
+		it("returns false when backend is connecting", () => {
+			const deps = createDeps({ isBackendConnecting: () => true });
+			const orchestrator = new SyncOrchestrator(deps);
+			expect(orchestrator.shouldSync()).toBe(false);
+		});
+
+		it("returns true when backend is not connecting", () => {
+			const deps = createDeps({ isBackendConnecting: () => false });
+			const orchestrator = new SyncOrchestrator(deps);
+			expect(orchestrator.shouldSync()).toBe(true);
 		});
 	});
 
