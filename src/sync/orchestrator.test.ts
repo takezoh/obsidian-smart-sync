@@ -76,12 +76,17 @@ describe("SyncOrchestrator", () => {
 	});
 
 	describe("runSync()", () => {
-		it("notifies when remoteFs is not available", async () => {
-			const deps = createDeps({ remoteFs: () => null });
+		it("does not notify when remoteFs is not available", async () => {
+			const debugFn = vi.fn();
+			const deps = createDeps({
+				remoteFs: () => null,
+				logger: { debug: debugFn, info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as import("../logging/logger").Logger,
+			});
 			const orchestrator = new SyncOrchestrator(deps);
 			await orchestrator.runSync();
-			expect(deps.notify).toHaveBeenCalledWith("Not connected to a remote backend");
+			expect(deps.notify).not.toHaveBeenCalled();
 			expect(deps.onStatusChange).toHaveBeenCalledWith("not_connected");
+			expect(debugFn).toHaveBeenCalledWith("runSync: skipped — no remote backend");
 			await orchestrator.close();
 		});
 

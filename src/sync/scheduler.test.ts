@@ -155,6 +155,18 @@ describe("SyncScheduler", () => {
 			vi.advanceTimersByTime(5000);
 			expect(deps.runSync).not.toHaveBeenCalled();
 		});
+
+		it("skips debounced sync on vault change when remoteFs is null", () => {
+			scheduler.destroy();
+			deps = createDeps({ remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			const handler = deps.vaultHandlers.get("modify") as VaultHandler;
+			handler(makeFile("note.md"));
+			vi.advanceTimersByTime(5000);
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("file-open priority sync", () => {
@@ -232,6 +244,17 @@ describe("SyncScheduler", () => {
 			handler!(new Event("focus"));
 			expect(deps.runSync).not.toHaveBeenCalled();
 		});
+
+		it("skips sync on focus when remoteFs is null", () => {
+			scheduler.destroy();
+			deps = createDeps({ remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			const handler = windowListeners.get("focus");
+			handler!(new Event("focus"));
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("online event", () => {
@@ -248,6 +271,17 @@ describe("SyncScheduler", () => {
 			handler!(new Event("online"));
 			expect(deps.runSync).not.toHaveBeenCalled();
 		});
+
+		it("skips sync on online event when remoteFs is null", () => {
+			scheduler.destroy();
+			deps = createDeps({ remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			const handler = windowListeners.get("online");
+			handler!(new Event("online"));
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("visibility event", () => {
@@ -260,6 +294,17 @@ describe("SyncScheduler", () => {
 
 		it("skips sync when already syncing", () => {
 			deps.isSyncing.mockReturnValue(true);
+			const handler = documentListeners.get("visibilitychange");
+			handler!(new Event("visibilitychange"));
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("skips sync on visibility change when remoteFs is null", () => {
+			scheduler.destroy();
+			deps = createDeps({ remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
 			const handler = documentListeners.get("visibilitychange");
 			handler!(new Event("visibilitychange"));
 			expect(deps.runSync).not.toHaveBeenCalled();
