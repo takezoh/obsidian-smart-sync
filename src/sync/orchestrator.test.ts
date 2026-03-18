@@ -85,11 +85,11 @@ describe("SyncOrchestrator", () => {
 			await orchestrator.close();
 		});
 
-		it("notifies 'Everything up to date' when both sides are empty", async () => {
+		it("does not notify on successful sync", async () => {
 			const deps = createDeps();
 			const orchestrator = new SyncOrchestrator(deps);
 			await orchestrator.runSync();
-			expect(deps.notify).toHaveBeenCalledWith("Everything up to date");
+			expect(deps.notify).not.toHaveBeenCalled();
 			expect(deps.onStatusChange).toHaveBeenCalledWith("idle");
 			await orchestrator.close();
 		});

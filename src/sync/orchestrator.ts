@@ -24,24 +24,6 @@ interface SyncCycleResult {
 	conflicts: number;
 }
 
-function buildNotificationMessage(cycle: SyncCycleResult): string {
-	const counts = { pushed: 0, pulled: 0, matched: 0, deleted: 0 };
-	for (const a of cycle.result.succeeded) {
-		if (a.action.action === "push") counts.pushed++;
-		else if (a.action.action === "pull") counts.pulled++;
-		else if (a.action.action === "match") counts.matched++;
-		else if (a.action.action === "delete_local" || a.action.action === "delete_remote") counts.deleted++;
-	}
-	const parts: string[] = [];
-	if (counts.pushed > 0) parts.push(`${counts.pushed} pushed`);
-	if (counts.pulled > 0) parts.push(`${counts.pulled} pulled`);
-	if (counts.matched > 0) parts.push(`${counts.matched} matched`);
-	if (counts.deleted > 0) parts.push(`${counts.deleted} deleted`);
-	if (cycle.conflicts > 0) parts.push(`${cycle.conflicts} conflicts`);
-	if (cycle.failed > 0) parts.push(`${cycle.failed} errors`);
-	return parts.length === 0 ? "Everything up to date" : `Sync: ${parts.join(", ")}`;
-}
-
 export interface SyncOrchestratorDeps {
 	getSettings: () => AirSyncSettings;
 	saveSettings: () => Promise<void>;
@@ -136,7 +118,6 @@ export class SyncOrchestrator {
 					this.deps.logger?.info("Sync completed", { succeeded, conflicts, failed });
 				}
 
-				this.deps.notify(buildNotificationMessage(result));
 				await this.deps.logger?.flush();
 
 				const allPaths = this.deps.localTracker.getDirtyPaths();
