@@ -226,3 +226,191 @@ describe("BackendManager — isConnected false with prior connection", () => {
 		expect(deps.onDisconnected).toHaveBeenCalled();
 	});
 });
+
+describe("BackendManager — isConnecting flag", () => {
+	it("returns false before initBackend is called", () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		expect(mgr.isConnecting()).toBe(false);
+	});
+
+	it("returns true while initBackend is in progress", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		let connectingDuringInit = false;
+		let resolve!: () => void;
+		const blocker = new Promise<void>((r) => { resolve = r; });
+
+		fakeProvider.resolveRemoteVault = async () => {
+			connectingDuringInit = mgr.isConnecting();
+			await blocker;
+			return { backendUpdates: {} };
+		};
+
+		const initPromise = mgr.initBackend();
+
+		// Wait a tick for the async code to reach the blocker
+		await Promise.resolve();
+
+		expect(connectingDuringInit).toBe(true);
+		resolve();
+		await initPromise;
+	});
+
+	it("returns false after initBackend completes successfully", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		expect(mgr.isConnecting()).toBe(false);
+	});
+
+	it("returns false after initBackend fails", async () => {
+		fakeProvider.resolveRemoteVault = () => {
+			throw new Error("network error");
+		};
+
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		expect(mgr.isConnecting()).toBe(false);
+	});
+
+	it("second concurrent call to initBackend is ignored (early return)", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		let resolve!: () => void;
+		const blocker = new Promise<void>((r) => { resolve = r; });
+
+		fakeProvider.resolveRemoteVault = async () => {
+			await blocker;
+			return { backendUpdates: {} };
+		};
+
+		const first = mgr.initBackend();
+		const second = mgr.initBackend(); // should be ignored
+
+		resolve();
+		await Promise.all([first, second]);
+
+		// onConnected should only be called once
+		expect(deps.onConnected).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns true while completeBackendConnect is in progress", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		// Ensure backendProvider is set
+		await mgr.initBackend();
+
+		let connectingDuringComplete = false;
+		let resolve!: () => void;
+		const blocker = new Promise<void>((r) => { resolve = r; });
+
+		fakeProvider.auth.completeAuth = async () => {
+			connectingDuringComplete = mgr.isConnecting();
+			await blocker;
+			return {};
+		};
+
+		const completePromise = mgr.completeBackendConnect("auth-code");
+
+		await Promise.resolve();
+
+		expect(connectingDuringComplete).toBe(true);
+		resolve();
+		await completePromise;
+	});
+
+	it("returns false after completeBackendConnect completes", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		fakeProvider.auth.completeAuth = () => Promise.resolve({});
+
+		await mgr.completeBackendConnect("auth-code");
+
+		expect(mgr.isConnecting()).toBe(false);
+	});
+
+	it("returns false after completeBackendConnect fails", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+
+		fakeProvider.auth.completeAuth = () => { throw new Error("auth failed"); };
+
+		await mgr.completeBackendConnect("auth-code");
+
+		expect(mgr.isConnecting()).toBe(false);
+	});
+
+	it("completeBackendConnect is ignored when initBackend is in progress", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		let resolve!: () => void;
+		const blocker = new Promise<void>((r) => { resolve = r; });
+
+		fakeProvider.resolveRemoteVault = async () => {
+			await blocker;
+			return { backendUpdates: {} };
+		};
+
+		const initPromise = mgr.initBackend();
+
+		// completeBackendConnect should be ignored since connecting is true
+		const completeSpy = vi.spyOn(fakeProvider.auth, "completeAuth");
+		await mgr.completeBackendConnect("auth-code");
+
+		expect(completeSpy).not.toHaveBeenCalled();
+
+		resolve();
+		await initPromise;
+	});
+
+	it("initBackend is ignored when completeBackendConnect is in progress", async () => {
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+
+		await mgr.initBackend();
+		(deps.onConnected as ReturnType<typeof vi.fn>).mockClear();
+
+		let resolve!: () => void;
+		const blocker = new Promise<void>((r) => { resolve = r; });
+
+		fakeProvider.auth.completeAuth = async () => {
+			await blocker;
+			return {};
+		};
+
+		const completePromise = mgr.completeBackendConnect("auth-code");
+
+		// initBackend should be ignored since connecting is true
+		await mgr.initBackend();
+		expect(deps.onConnected).not.toHaveBeenCalled();
+
+		resolve();
+		await completePromise;
+	});
+});

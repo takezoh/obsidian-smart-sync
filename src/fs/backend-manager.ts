@@ -23,8 +23,13 @@ export class BackendManager {
 	private remoteFs: IFileSystem | null = null;
 	private backendProvider: IBackendProvider | null = null;
 	private lastBackendIdentity: string | null = null;
+	private connecting = false;
 
 	constructor(private deps: BackendManagerDeps) {}
+
+	isConnecting(): boolean {
+		return this.connecting;
+	}
 
 	getRemoteFs(): IFileSystem | null {
 		return this.remoteFs;
@@ -36,10 +41,13 @@ export class BackendManager {
 
 	/** Resolve the backend provider and create the remote IFileSystem */
 	async initBackend(): Promise<void> {
+		if (this.connecting) return;
+
 		const settings = this.deps.getSettings();
 		const provider = getBackendProvider(settings.backendType);
 		if (!provider) return;
 
+		this.connecting = true;
 		this.backendProvider = provider;
 
 		try {
@@ -83,6 +91,8 @@ export class BackendManager {
 			if (e instanceof AuthError) {
 				this.deps.notify("Authentication expired. Please reconnect in settings.");
 			}
+		} finally {
+			this.connecting = false;
 		}
 	}
 
@@ -134,12 +144,15 @@ export class BackendManager {
 
 	/** Complete the auth flow with a code/token from the user */
 	async completeBackendConnect(code: string): Promise<void> {
+		if (this.connecting) return;
 		if (!this.backendProvider) {
 			this.deps.notify("Start the connection flow first");
 			return;
 		}
 
 		const settings = this.deps.getSettings();
+		this.connecting = true;
+
 		try {
 			const type = this.backendProvider.type;
 			const backendData = settings.backendData[type] ?? {};
@@ -171,6 +184,8 @@ export class BackendManager {
 			const msg = err instanceof Error ? err.message : String(err);
 			this.deps.getLogger().error("Authorization failed", { message: msg });
 			this.deps.notify(`Authorization failed: ${msg}`);
+		} finally {
+			this.connecting = false;
 		}
 
 		this.deps.refreshSettingsDisplay();
