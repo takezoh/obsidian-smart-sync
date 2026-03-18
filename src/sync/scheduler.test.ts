@@ -57,7 +57,7 @@ function createDeps(overrides: Partial<SyncSchedulerDeps> = {}) {
 		remoteFs: () => createMockFs("remote"),
 		stateStore: createMockStateStore(),
 		localTracker: new LocalChangeTracker(),
-		orchestrator: { runSync, pullSingle },
+		orchestrator: { runSync, pullSingle, isSyncing: () => false },
 		isExcluded: () => false,
 		registerEvent: vi.fn(),
 		register: vi.fn((cb: () => void) => { cleanups.push(cb); }),

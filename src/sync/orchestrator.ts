@@ -127,7 +127,6 @@ export class SyncOrchestrator {
 		}
 
 		await this.syncMutex.run(async () => {
-			let lastResult: SyncCycleResult | null = null;
 			do {
 				this.syncPending = false;
 				this.deps.onStatusChange("syncing");
@@ -136,7 +135,6 @@ export class SyncOrchestrator {
 				const result = await this.executeWithRetry();
 				if (!result) return; // Fatal error already handled
 
-				lastResult = result;
 				const { succeeded, failed, conflicts } = result;
 				if (failed > 0) {
 					this.deps.onStatusChange("partial_error");
@@ -146,15 +144,14 @@ export class SyncOrchestrator {
 					this.deps.logger?.info("Sync completed", { succeeded, conflicts, failed });
 				}
 
+				if (this.deps.getSettings().enableLogging) {
+					this.deps.notify(buildNotificationMessage(result));
+				}
 				await this.deps.logger?.flush();
 
 				const allPaths = this.deps.localTracker.getDirtyPaths();
 				this.deps.localTracker.acknowledge(allPaths);
 			} while (this.syncPending);
-
-			if (lastResult && this.deps.getSettings().enableLogging) {
-				this.deps.notify(buildNotificationMessage(lastResult));
-			}
 		});
 	}
 

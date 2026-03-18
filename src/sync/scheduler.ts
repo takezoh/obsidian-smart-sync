@@ -10,6 +10,7 @@ const DEBOUNCE_MS = 5000;
 export interface SyncOrchestrator {
 	runSync(): Promise<void>;
 	pullSingle(path: string): Promise<void>;
+	isSyncing(): boolean;
 }
 
 export interface SyncSchedulerDeps {
@@ -56,6 +57,7 @@ export class SyncScheduler {
 	private wireFocusEvent(): void {
 		const onFocus = () => {
 			if (!this.deps.remoteFs()) return;
+			if (this.deps.orchestrator.isSyncing()) return;
 			void this.deps.orchestrator.runSync();
 		};
 		window.addEventListener("focus", onFocus);
@@ -93,6 +95,7 @@ export class SyncScheduler {
 	private wireOnlineEvent(): void {
 		const onOnline = () => {
 			if (!this.deps.remoteFs()) return;
+			if (this.deps.orchestrator.isSyncing()) return;
 			void this.deps.orchestrator.runSync();
 		};
 		window.addEventListener("online", onOnline);
@@ -102,9 +105,9 @@ export class SyncScheduler {
 	private wireVisibilityEvent(): void {
 		const onVisibilityChange = () => {
 			if (!this.deps.remoteFs()) return;
-			if (document.visibilityState === "visible") {
-				void this.deps.orchestrator.runSync();
-			}
+			if (document.visibilityState !== "visible") return;
+			if (this.deps.orchestrator.isSyncing()) return;
+			void this.deps.orchestrator.runSync();
 		};
 		document.addEventListener("visibilitychange", onVisibilityChange);
 		this.deps.register(() => document.removeEventListener("visibilitychange", onVisibilityChange));
