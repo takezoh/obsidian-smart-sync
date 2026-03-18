@@ -2,7 +2,7 @@ import type { ISecretStore } from "./secret-store";
 
 /** Generate a deterministic SecretStorage key for a backend token */
 function tokenKey(backendType: string, tokenType: "refresh" | "access"): string {
-	return `smart-sync-${backendType}-${tokenType}-token`;
+	return `air-sync-${backendType}-${tokenType}-token`;
 }
 
 export interface StoredTokens {

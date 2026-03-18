@@ -1,4 +1,4 @@
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import type { IFileSystem } from "../fs/interface";
 import type { IBackendProvider } from "../fs/backend";
 import type { Logger } from "../logging/logger";
@@ -43,7 +43,7 @@ function buildNotificationMessage(cycle: SyncCycleResult): string {
 }
 
 export interface SyncOrchestratorDeps {
-	getSettings: () => SmartSyncSettings;
+	getSettings: () => AirSyncSettings;
 	saveSettings: () => Promise<void>;
 	localFs: () => IFileSystem | null;
 	remoteFs: () => IFileSystem | null;

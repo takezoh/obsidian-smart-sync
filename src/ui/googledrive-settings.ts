@@ -1,6 +1,6 @@
 import type { App } from "obsidian";
 import { Notice, SecretComponent, Setting } from "obsidian";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import type {
 	BackendConnectionActions,
 	IBackendSettingsRenderer,
@@ -19,7 +19,7 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 
 	render(
 		containerEl: HTMLElement,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		_onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions,
 		_app: App,
@@ -33,10 +33,10 @@ export class GoogleDriveSettingsRenderer implements IBackendSettingsRenderer {
 		let statusClass: string;
 		if (isConnected) {
 			statusDesc = "\u25cf Connected";
-			statusClass = "smart-sync-status-connected";
+			statusClass = "air-sync-status-connected";
 		} else {
 			statusDesc = "\u25cf Not connected";
-			statusClass = "smart-sync-status-disconnected";
+			statusClass = "air-sync-status-disconnected";
 		}
 		const statusSetting = new Setting(containerEl)
 			.setName("Connection status")
@@ -82,7 +82,7 @@ export class GoogleDriveCustomSettingsRenderer implements IBackendSettingsRender
 
 	render(
 		containerEl: HTMLElement,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions,
 		app: App,
@@ -152,10 +152,10 @@ export class GoogleDriveCustomSettingsRenderer implements IBackendSettingsRender
 		let statusClass: string;
 		if (isConnected) {
 			statusDesc = "\u25cf Connected";
-			statusClass = "smart-sync-status-connected";
+			statusClass = "air-sync-status-connected";
 		} else {
 			statusDesc = "\u25cf Not connected";
-			statusClass = "smart-sync-status-disconnected";
+			statusClass = "air-sync-status-disconnected";
 		}
 		const statusSetting = new Setting(containerEl)
 			.setName("Connection status")

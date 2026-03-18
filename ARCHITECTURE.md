@@ -1,4 +1,4 @@
-# Smart Sync -- Architecture
+# Air Sync -- Architecture
 
 ## Vision
 
@@ -19,7 +19,7 @@ Sync should be invisible -- like air. When the user opens Obsidian, changes sinc
 ```
 src/
 ├── main.ts                          # Plugin entry point (lifecycle only)
-├── settings.ts                      # SmartSyncSettings type & defaults
+├── settings.ts                      # AirSyncSettings type & defaults
 ├── sync/
 │   ├── types.ts                     # SyncRecord, MixedEntity, SyncAction, SyncPlan, SafetyCheckResult
 │   ├── local-tracker.ts             # LocalChangeTracker — in-memory dirty path set
@@ -68,7 +68,7 @@ src/
 │       └── index.ts                 # InMemoryFs — test double
 │
 ├── ui/
-│   ├── settings.ts                  # SmartSyncSettingTab — main settings UI
+│   ├── settings.ts                  # AirSyncSettingTab — main settings UI
 │   ├── backend-settings.ts          # Backend connection settings section
 │   └── googledrive-settings.ts      # Google Drive specific settings
 │
@@ -77,7 +77,7 @@ src/
 │   └── metadata-store.ts            # MetadataStore<T> — generic IDB-backed file metadata cache
 │
 ├── logging/
-│   └── logger.ts                    # Logger — structured log writer (.smartsync/logs/)
+│   └── logger.ts                    # Logger — structured log writer (.airsync/logs/)
 │
 ├── queue/
 │   └── async-queue.ts               # AsyncPool (bounded concurrency), AsyncMutex

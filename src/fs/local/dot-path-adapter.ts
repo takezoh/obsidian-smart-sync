@@ -3,7 +3,7 @@ import type { FileEntity } from "../types";
 import { sha256 } from "../../utils/hash";
 
 /**
- * Handles filesystem operations for dot-prefixed paths (e.g. `.smartsync/`)
+ * Handles filesystem operations for dot-prefixed paths (e.g. `.airsync/`)
  * that are excluded from Obsidian's Vault index. Uses the raw adapter API.
  */
 export class DotPathAdapter {

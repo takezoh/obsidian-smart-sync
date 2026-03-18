@@ -1,7 +1,7 @@
 import type { App } from "obsidian";
 import type { IFileSystem } from "./interface";
 import type { IAuthProvider } from "./auth";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import type { Logger } from "../logging/logger";
 import type { RemoteVaultResolution } from "../sync/remote-vault";
 
@@ -22,20 +22,20 @@ export interface IBackendProvider {
 	 * Create an IFileSystem from current settings.
 	 * Returns null if the backend is not fully configured.
 	 */
-	createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null;
+	createFs(app: App, settings: AirSyncSettings, logger?: Logger): IFileSystem | null;
 
 	/** Whether credentials are present and the backend is ready to sync */
-	isConnected(settings: SmartSyncSettings): boolean;
+	isConnected(settings: AirSyncSettings): boolean;
 
 	/** Return a string uniquely identifying the current remote target (e.g. folder ID) */
-	getIdentity(settings: SmartSyncSettings): string | null;
+	getIdentity(settings: AirSyncSettings): string | null;
 
 	/**
 	 * Called when the backend identity changes (e.g. user switches to a different folder).
 	 * The provider should reset any stale cursors/tokens in backendData that are
 	 * scoped to the previous remote target.
 	 */
-	resetTargetState?(settings: SmartSyncSettings): void;
+	resetTargetState?(settings: AirSyncSettings): void;
 
 	/**
 	 * Read updated internal state from the FS to persist in settings.backendData.
@@ -52,7 +52,7 @@ export interface IBackendProvider {
 	 */
 	resolveRemoteVault?(
 		app: App,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		vaultName: string,
 		logger?: Logger,
 	): Promise<RemoteVaultResolution>;
@@ -61,12 +61,12 @@ export interface IBackendProvider {
 	 * Disconnect the backend: revoke auth and reset all backend state.
 	 * Returns the reset backendData to persist.
 	 */
-	disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>>;
+	disconnect(settings: AirSyncSettings): Promise<Record<string, unknown>>;
 }
 
 /** Type-safe helper to retrieve backend-specific data from settings */
 export function getBackendData<T>(
-	settings: SmartSyncSettings,
+	settings: AirSyncSettings,
 	type: string
 ): T | undefined {
 	return settings.backendData[type] as T | undefined;

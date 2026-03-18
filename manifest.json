@@ -1,6 +1,6 @@
 {
-	"id": "smart-sync",
-	"name": "Smart Sync",
+	"id": "air-sync",
+	"name": "Air Sync",
 	"version": "0.1.10",
 	"minAppVersion": "1.11.4",
 	"description": "Sync your vault bidirectionally with Google Drive.",

@@ -18,7 +18,7 @@ export class LocalFs implements IFileSystem {
 		this.dotPath = new DotPathAdapter(
 			this.vault,
 			(p) => this.mkdirRecursive(p),
-			() => [".smartsync", ...getDotPaths()],
+			() => [".airsync", ...getDotPaths()],
 		);
 	}
 

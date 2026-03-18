@@ -1,4 +1,4 @@
-# Smart Sync — Obsidian Plugin
+# Air Sync — Obsidian Plugin
 
 An Obsidian community plugin for bidirectional sync between vaults and cloud storage.
 
@@ -43,7 +43,7 @@ Always pass `npm run lint && npm run build && npm test` after making changes.
 ### Type-safe mocks in tests
 - Do not cast `vi.spyOn` targets with `as any`. Use typed helpers instead
   - `spyRequestUrl()` — type-safe spy on obsidian's `requestUrl`
-  - `mockSettings()` — returns a complete `SmartSyncSettings` default
+  - `mockSettings()` — returns a complete `AirSyncSettings` default
 - Access private fields via `as unknown as { field: Type }` pattern
 - Pass `createMockStateStore()` directly (its intersection type satisfies `SyncStateStore`)
 
@@ -65,7 +65,7 @@ Always pass `npm run lint && npm run build && npm test` after making changes.
 
 ## Build artifacts
 
-`main.js`, `manifest.json`, `styles.css` → placed in vault's `.obsidian/plugins/obsidian-smart-sync/`. Never commit `node_modules/` or `main.js`.
+`main.js`, `manifest.json`, `styles.css` → placed in vault's `.obsidian/plugins/obsidian-air-sync/`. Never commit `node_modules/` or `main.js`.
 
 ## Releases
 

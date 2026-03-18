@@ -90,7 +90,7 @@ Two OAuth implementations share a common base class (`GoogleAuthBase`):
 
 - Redirects to Google OAuth with `redirect_uri` pointing to `auth-smartsync.takezo.dev`
 - Auth server exchanges the code for tokens (confidential client with `client_secret`)
-- Plugin receives tokens via `obsidian://smart-sync-auth?access_token=...&refresh_token=...`
+- Plugin receives tokens via `obsidian://air-sync-auth?access_token=...&refresh_token=...`
 - Token refresh: POST to `auth-smartsync.takezo.dev/google/token/refresh`
 - Scope: `drive.file` (app-created files only)
 
@@ -130,7 +130,7 @@ Tokens (`refreshToken`, `accessToken`) are stored in Obsidian's `SecretStorage` 
 
 - Type: `"googledrive"`
 - Uses `GoogleAuth` (server-side OAuth)
-- `resolveRemoteVault()`: finds or creates a vault folder under `obsidian-smart-sync/` in Drive
+- `resolveRemoteVault()`: finds or creates a vault folder under `obsidian-air-sync/` in Drive
 
 ### GoogleDriveCustomProvider (user credentials)
 

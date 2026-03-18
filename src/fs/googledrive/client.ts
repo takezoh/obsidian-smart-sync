@@ -198,7 +198,7 @@ export class DriveClient {
 		const metadata = buildUploadMetadata(name, parentId, modifiedTime, existingFileId);
 
 		// Use multipart upload
-		const boundary = "smart_sync_boundary_" + Date.now();
+		const boundary = "air_sync_boundary_" + Date.now();
 		const metaJson = JSON.stringify(metadata);
 
 		const encoder = new TextEncoder();

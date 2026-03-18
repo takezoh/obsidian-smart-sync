@@ -1,4 +1,4 @@
-# Smart Sync
+# Air Sync
 
 Sync your Obsidian vault bidirectionally with cloud storage, resolving conflicts and concurrent edits automatically via 3-way merge.
 
@@ -21,7 +21,7 @@ Currently supports Google Drive as a storage backend.
 
 ## Google Drive setup
 
-1. Open the plugin settings (**Settings → Smart Sync**)
+1. Open the plugin settings (**Settings → Air Sync**)
 2. Click the **Connect to Google Drive** button
 3. Complete the Google account authorization in the browser
 4. The plugin automatically receives the callback via `obsidian://` protocol handler
@@ -65,7 +65,7 @@ The default redirect page (`https://smartsync.takezo.dev/callback`) is a [single
 | Dot-prefixed paths to sync | Dot-prefixed folders to include in sync (e.g. `.templates`) | (none) |
 | Ignore patterns | Glob patterns to exclude (one per line) | Desktop: (none), Mobile: `.md`/`.canvas`/`.base` only |
 | Mobile max file size | Skip files larger than this on mobile | 10 MB |
-| Enable logging | Write sync logs to `.smartsync/` in your vault | Off |
+| Enable logging | Write sync logs to `.airsync/` in your vault | Off |
 | Log level | Minimum log level (debug / info / warn / error) | info |
 
 ### Conflict resolution strategies
@@ -98,7 +98,7 @@ Example:
 
 | Command | Description |
 |---------|-------------|
-| `Smart Sync: Sync now` | Run sync manually |
+| `Air Sync: Sync now` | Run sync manually |
 
 ## Disclaimer
 

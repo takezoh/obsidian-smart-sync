@@ -10,7 +10,7 @@
 | `duplicate` | Save remote as `.conflict` file, keep local at original path |
 | `ask` | Show a modal for the user to choose `keep_local` / `keep_remote` / `duplicate` |
 
-The setting is stored as `conflictStrategy` in `SmartSyncSettings`.
+The setting is stored as `conflictStrategy` in `AirSyncSettings`.
 
 ## auto_merge fallback chain
 
@@ -87,7 +87,7 @@ These are not exposed in the settings UI.
 
 ## Conflict history
 
-`ConflictHistory` (`conflict-history.ts`) writes an audit log of all conflict resolutions to `.smartsync/conflicts/{device}.json`.
+`ConflictHistory` (`conflict-history.ts`) writes an audit log of all conflict resolutions to `.airsync/conflicts/{device}.json`.
 
 ```typescript
 interface ConflictRecord {
@@ -105,5 +105,5 @@ interface ConflictRecord {
 ```
 
 - Maximum 500 records per device file (`MAX_RECORDS`); older entries are trimmed on append
-- Directory structure `.smartsync/conflicts/` is created on demand
+- Directory structure `.airsync/conflicts/` is created on demand
 - The device name is pre-sanitized (same as logging)

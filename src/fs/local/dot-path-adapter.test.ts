@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Vault } from "obsidian";
 import { DotPathAdapter } from "./dot-path-adapter";
 
-function createAdapter(dotRoots: string[] = [".smartsync"]): {
+function createAdapter(dotRoots: string[] = [".airsync"]): {
 	vault: Vault;
 	adapter: DotPathAdapter;
 } {
@@ -19,16 +19,16 @@ function createAdapter(dotRoots: string[] = [".smartsync"]): {
 describe("DotPathAdapter", () => {
 	describe("isDotPath", () => {
 		it("matches a single root", () => {
-			const { adapter } = createAdapter([".smartsync"]);
-			expect(adapter.isDotPath(".smartsync")).toBe(true);
-			expect(adapter.isDotPath(".smartsync/logs")).toBe(true);
+			const { adapter } = createAdapter([".airsync"]);
+			expect(adapter.isDotPath(".airsync")).toBe(true);
+			expect(adapter.isDotPath(".airsync/logs")).toBe(true);
 			expect(adapter.isDotPath("notes")).toBe(false);
 		});
 
 		it("matches multiple roots", () => {
-			const { adapter } = createAdapter([".smartsync", ".templates"]);
-			expect(adapter.isDotPath(".smartsync")).toBe(true);
-			expect(adapter.isDotPath(".smartsync/logs")).toBe(true);
+			const { adapter } = createAdapter([".airsync", ".templates"]);
+			expect(adapter.isDotPath(".airsync")).toBe(true);
+			expect(adapter.isDotPath(".airsync/logs")).toBe(true);
 			expect(adapter.isDotPath(".templates")).toBe(true);
 			expect(adapter.isDotPath(".templates/daily.md")).toBe(true);
 			expect(adapter.isDotPath(".other")).toBe(false);
@@ -36,7 +36,7 @@ describe("DotPathAdapter", () => {
 
 		it("does not match partial prefix", () => {
 			const { adapter } = createAdapter([".smart"]);
-			expect(adapter.isDotPath(".smartsync")).toBe(false);
+			expect(adapter.isDotPath(".airsync")).toBe(false);
 			expect(adapter.isDotPath(".smart")).toBe(true);
 			expect(adapter.isDotPath(".smart/file")).toBe(true);
 		});
@@ -44,10 +44,10 @@ describe("DotPathAdapter", () => {
 
 	describe("listAll", () => {
 		it("lists files from all dot roots", async () => {
-			const { vault, adapter } = createAdapter([".smartsync", ".templates"]);
+			const { vault, adapter } = createAdapter([".airsync", ".templates"]);
 			const vaultInternal = vault as unknown as { files: Map<string, unknown> };
-			vaultInternal.files.set(".smartsync", { type: "folder" });
-			vaultInternal.files.set(".smartsync/state.json", {
+			vaultInternal.files.set(".airsync", { type: "folder" });
+			vaultInternal.files.set(".airsync/state.json", {
 				type: "file",
 				content: new ArrayBuffer(10),
 				mtime: 100,
@@ -63,12 +63,12 @@ describe("DotPathAdapter", () => {
 			await adapter.listAll(entities as never);
 
 			const paths = entities.map((e) => e.path);
-			expect(paths).toContain(".smartsync/state.json");
+			expect(paths).toContain(".airsync/state.json");
 			expect(paths).toContain(".templates/daily.md");
 		});
 
 		it("skips roots that do not exist", async () => {
-			const { adapter } = createAdapter([".smartsync", ".missing"]);
+			const { adapter } = createAdapter([".airsync", ".missing"]);
 			const entities: { path: string }[] = [];
 			await adapter.listAll(entities as never);
 			expect(entities).toHaveLength(0);

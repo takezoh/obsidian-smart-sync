@@ -1,6 +1,6 @@
 import { getBackendData } from "../backend";
 import type { ISecretStore } from "../secret-store";
-import type { SmartSyncSettings } from "../../settings";
+import type { AirSyncSettings } from "../../settings";
 import type { Logger } from "../../logging/logger";
 import { GoogleAuth } from "./auth";
 import type { IGoogleAuth } from "./auth";
@@ -24,7 +24,7 @@ const DEFAULT_GDRIVE_DATA: GoogleDriveBackendData = {
 };
 
 /** Type-safe accessor for Google Drive backend data */
-function getGDriveData(settings: SmartSyncSettings): GoogleDriveBackendData {
+function getGDriveData(settings: AirSyncSettings): GoogleDriveBackendData {
 	return {
 		...DEFAULT_GDRIVE_DATA,
 		...getBackendData<GoogleDriveBackendData>(settings, "googledrive"),
@@ -74,7 +74,7 @@ export class GoogleDriveProvider extends GoogleDriveProviderBase {
 		this.auth = new GoogleDriveAuthProvider(secretStore);
 	}
 
-	protected getData(settings: SmartSyncSettings): GoogleDriveBackendData {
+	protected getData(settings: AirSyncSettings): GoogleDriveBackendData {
 		return getGDriveData(settings);
 	}
 

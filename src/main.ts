@@ -1,6 +1,6 @@
 import { Notice, Platform, Plugin } from "obsidian";
-import { DEFAULT_SETTINGS, SmartSyncSettings } from "./settings";
-import { SmartSyncSettingTab } from "./ui/settings";
+import { DEFAULT_SETTINGS, AirSyncSettings } from "./settings";
+import { AirSyncSettingTab } from "./ui/settings";
 import { LocalFs } from "./fs/local/index";
 import { BackendManager } from "./fs/backend-manager";
 import { initRegistry } from "./fs/registry";
@@ -12,8 +12,8 @@ import { LocalChangeTracker } from "./sync/local-tracker";
 import { Logger, getDeviceName } from "./logging/logger";
 import type { LoggerAdapter } from "./logging/logger";
 
-export default class SmartSyncPlugin extends Plugin {
-	settings!: SmartSyncSettings;
+export default class AirSyncPlugin extends Plugin {
+	settings!: AirSyncSettings;
 	private localFs: LocalFs | null = null;
 	backendManager!: BackendManager;
 	private statusBarEl: HTMLElement | null = null;
@@ -21,7 +21,7 @@ export default class SmartSyncPlugin extends Plugin {
 	private orchestrator!: SyncOrchestrator;
 	private scheduler!: SyncScheduler;
 	private localTracker!: LocalChangeTracker;
-	private settingTab: SmartSyncSettingTab | null = null;
+	private settingTab: AirSyncSettingTab | null = null;
 	private logger!: Logger;
 
 	async onload() {
@@ -104,11 +104,11 @@ export default class SmartSyncPlugin extends Plugin {
 			register: (cb) => this.register(cb),
 		});
 
-		this.settingTab = new SmartSyncSettingTab(this.app, this);
+		this.settingTab = new AirSyncSettingTab(this.app, this);
 		this.addSettingTab(this.settingTab);
 
-		// Handle OAuth callback via obsidian://smart-sync-auth?access_token=...&state=... or ?code=...&state=...
-		this.registerObsidianProtocolHandler("smart-sync-auth", (params) => {
+		// Handle OAuth callback via obsidian://air-sync-auth?access_token=...&state=... or ?code=...&state=...
+		this.registerObsidianProtocolHandler("air-sync-auth", (params) => {
 			if (!params.access_token && !params.code) {
 				new Notice("Authorization failed: no token or code received");
 				return;
@@ -159,7 +159,7 @@ export default class SmartSyncPlugin extends Plugin {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<SmartSyncSettings>,
+			(await this.loadData()) as Partial<AirSyncSettings>,
 		);
 
 		let needsSave = false;

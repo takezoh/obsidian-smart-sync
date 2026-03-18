@@ -249,7 +249,7 @@ describe("GoogleDriveProvider.completeAuth", () => {
 
 		// Tokens are stored in SecretStorage, not returned in the result
 		expect(result.refreshToken).toBeUndefined();
-		expect(secretStore.getSecret("smart-sync-googledrive-refresh-token")).toBe("new-refresh");
+		expect(secretStore.getSecret("air-sync-googledrive-refresh-token")).toBe("new-refresh");
 		expect(result.accessTokenExpiry).toBeGreaterThan(0);
 		expect(authInternal.googleAuth.getAuthState()).toBeNull();
 	});
@@ -491,8 +491,8 @@ describe("GoogleDriveCustomProvider.completeAuth", () => {
 
 		// Tokens are stored in SecretStorage, not returned in the result
 		expect(result.refreshToken).toBeUndefined();
-		expect(secretStore.getSecret("smart-sync-googledrive-custom-refresh-token")).toBe("custom-refresh");
-		expect(secretStore.getSecret("smart-sync-googledrive-custom-access-token")).toBe("custom-access");
+		expect(secretStore.getSecret("air-sync-googledrive-custom-refresh-token")).toBe("custom-refresh");
+		expect(secretStore.getSecret("air-sync-googledrive-custom-access-token")).toBe("custom-access");
 		expect(result.accessTokenExpiry).toBeGreaterThan(0);
 
 		// Verify code_verifier was sent in token exchange
@@ -531,7 +531,7 @@ describe("GoogleDriveCustomProvider.completeAuth", () => {
 
 		// Tokens stored in SecretStorage
 		expect(result.refreshToken).toBeUndefined();
-		expect(secretStore.getSecret("smart-sync-googledrive-custom-refresh-token")).toBe("refresh");
+		expect(secretStore.getSecret("air-sync-googledrive-custom-refresh-token")).toBe("refresh");
 		const callBody = mockRequestUrl.mock.calls[0]?.[0];
 		const body = typeof callBody === "object" && callBody !== null && "body" in callBody
 			? (callBody as { body: string }).body : "";

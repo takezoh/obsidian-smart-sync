@@ -151,16 +151,16 @@ class AskConflictModal extends Modal {
 		contentEl.createEl("h3", { text: "Resolve sync conflict" });
 		contentEl.createEl("p", {
 			text: `Both local and remote versions of "${this.ctx.path}" have changed.`,
-			cls: "smart-sync-conflict-desc",
+			cls: "air-sync-conflict-desc",
 		});
 
 		if (this.ctx.local) {
-			const info = contentEl.createEl("div", { cls: "smart-sync-conflict-info" });
+			const info = contentEl.createEl("div", { cls: "air-sync-conflict-info" });
 			info.createEl("strong", { text: "Local: " });
 			info.createEl("span", { text: formatFileInfo(this.ctx.local) });
 		}
 		if (this.ctx.remote) {
-			const info = contentEl.createEl("div", { cls: "smart-sync-conflict-info" });
+			const info = contentEl.createEl("div", { cls: "air-sync-conflict-info" });
 			info.createEl("strong", { text: "Remote: " });
 			info.createEl("span", { text: formatFileInfo(this.ctx.remote) });
 		}

@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import type { IFileSystem } from "./interface";
 import type { IBackendProvider } from "./backend";
 import type { Logger } from "../logging/logger";
@@ -7,7 +7,7 @@ import { getBackendProvider } from "./registry";
 import { AuthError } from "./errors";
 
 export interface BackendManagerDeps {
-	getSettings: () => SmartSyncSettings;
+	getSettings: () => AirSyncSettings;
 	saveSettings: () => Promise<void>;
 	getApp: () => App;
 	getLogger: () => Logger;
@@ -88,7 +88,7 @@ export class BackendManager {
 
 	private async resolveRemoteVault(
 		provider: IBackendProvider,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 	): Promise<void> {
 		const vaultName = this.deps.getVaultName();
 		const type = provider.type;

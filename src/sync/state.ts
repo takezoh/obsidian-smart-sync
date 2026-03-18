@@ -1,7 +1,7 @@
 import type { SyncRecord } from "./types";
 import { IDBHelper, sanitizeDbName } from "../store/idb-helper";
 
-const DB_NAME_PREFIX = "smart-sync";
+const DB_NAME_PREFIX = "air-sync";
 const STORE_NAME = "sync-records";
 const CONTENT_STORE_NAME = "sync-content";
 const DB_VERSION = 3;

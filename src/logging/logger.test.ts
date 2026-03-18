@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Logger, LoggerAdapter, getDeviceName } from "./logger";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import { DEFAULT_SETTINGS } from "../settings";
 
 function createMockAdapter(): LoggerAdapter & {
@@ -25,13 +25,13 @@ function createMockAdapter(): LoggerAdapter & {
 	};
 }
 
-function createSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSettings {
+function createSettings(overrides: Partial<AirSyncSettings> = {}): AirSyncSettings {
 	return { ...DEFAULT_SETTINGS, enableLogging: true, ...overrides };
 }
 
 describe("Logger", () => {
 	let adapter: ReturnType<typeof createMockAdapter>;
-	let settings: SmartSyncSettings;
+	let settings: AirSyncSettings;
 	let logger: Logger;
 
 	beforeEach(() => {
@@ -51,7 +51,7 @@ describe("Logger", () => {
 
 		const files = Array.from(adapter.written.keys());
 		expect(files).toHaveLength(1);
-		expect(files[0]).toMatch(/^\.smartsync\/logs\/desktop\/\d{4}-\d{2}-\d{2}\.log$/);
+		expect(files[0]).toMatch(/^\.airsync\/logs\/desktop\/\d{4}-\d{2}-\d{2}\.log$/);
 
 		const content = adapter.written.get(files[0] ?? "")!;
 		expect(content).toContain("[INFO] test message");
@@ -73,7 +73,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/logs/my-iphone/");
+		expect(files[0]).toContain(".airsync/logs/my-iphone/");
 	});
 
 	it("sanitizes unsafe characters in device name", async () => {
@@ -83,7 +83,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/logs/pc-work-station-1/");
+		expect(files[0]).toContain(".airsync/logs/pc-work-station-1/");
 	});
 
 	it("falls back to 'unknown' for empty device name", async () => {
@@ -93,7 +93,7 @@ describe("Logger", () => {
 		await logger.flush();
 
 		const files = Array.from(adapter.written.keys());
-		expect(files[0]).toContain(".smartsync/logs/unknown/");
+		expect(files[0]).toContain(".airsync/logs/unknown/");
 	});
 
 	it("filters logs below configured level", async () => {
@@ -138,9 +138,9 @@ describe("Logger", () => {
 		logger.info("test");
 		await logger.flush();
 
-		expect(adapter.dirs.has(".smartsync")).toBe(true);
-		expect(adapter.dirs.has(".smartsync/logs")).toBe(true);
-		expect(adapter.dirs.has(".smartsync/logs/desktop")).toBe(true);
+		expect(adapter.dirs.has(".airsync")).toBe(true);
+		expect(adapter.dirs.has(".airsync/logs")).toBe(true);
+		expect(adapter.dirs.has(".airsync/logs/desktop")).toBe(true);
 	});
 
 	it("getDeviceName returns '{device}-{vaultId}' when vaultId is provided", () => {

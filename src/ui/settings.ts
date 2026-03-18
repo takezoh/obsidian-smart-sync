@@ -1,13 +1,13 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
-import type SmartSyncPlugin from "../main";
+import type AirSyncPlugin from "../main";
 import type { ConflictStrategy } from "../sync/types";
 import { getAllBackendProviders, getBackendProvider } from "../fs/registry";
 import { getBackendSettingsRenderer } from "./backend-settings";
 
-export class SmartSyncSettingTab extends PluginSettingTab {
-	plugin: SmartSyncPlugin;
+export class AirSyncSettingTab extends PluginSettingTab {
+	plugin: AirSyncPlugin;
 
-	constructor(app: App, plugin: SmartSyncPlugin) {
+	constructor(app: App, plugin: AirSyncPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -117,7 +117,7 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 							.map((line) => line.trim())
 							.filter((line) => line.length > 0)
 							.filter((line) => line.startsWith("."))
-							.filter((line) => line.replace(/\/+$/, "") !== ".smartsync");
+							.filter((line) => line.replace(/\/+$/, "") !== ".airsync");
 						this.plugin.settings.syncDotPaths = [...new Set(paths)];
 						await this.plugin.saveSettings();
 					})
@@ -161,7 +161,7 @@ export class SmartSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Enable logging")
 			.setDesc(
-				"Write sync logs to .smartsync/ in your vault for debugging."
+				"Write sync logs to .airsync/ in your vault for debugging."
 			)
 			.addToggle((toggle) =>
 				toggle

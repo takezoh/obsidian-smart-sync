@@ -1,7 +1,7 @@
 import type { LoggerAdapter } from "../logging/logger";
 import type { ConflictRecord } from "./types";
 
-const CONFLICTS_DIR = ".smartsync/conflicts";
+const CONFLICTS_DIR = ".airsync/conflicts";
 const MAX_RECORDS = 500;
 
 export class ConflictHistory {
@@ -35,8 +35,8 @@ export class ConflictHistory {
 			? combined.slice(combined.length - MAX_RECORDS)
 			: combined;
 
-		if (!(await this.adapter.exists(".smartsync"))) {
-			await this.adapter.mkdir(".smartsync");
+		if (!(await this.adapter.exists(".airsync"))) {
+			await this.adapter.mkdir(".airsync");
 		}
 		if (!(await this.adapter.exists(CONFLICTS_DIR))) {
 			await this.adapter.mkdir(CONFLICTS_DIR);

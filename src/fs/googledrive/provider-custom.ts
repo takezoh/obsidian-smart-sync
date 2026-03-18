@@ -2,7 +2,7 @@ import type { App } from "obsidian";
 import { Notice } from "obsidian";
 import { getBackendData } from "../backend";
 import type { ISecretStore } from "../secret-store";
-import type { SmartSyncSettings } from "../../settings";
+import type { AirSyncSettings } from "../../settings";
 import type { Logger } from "../../logging/logger";
 import type { RemoteVaultResolution } from "../../sync/remote-vault";
 import { GoogleAuthDirect } from "./auth";
@@ -33,7 +33,7 @@ const DEFAULT_GDRIVE_CUSTOM_DATA: GoogleDriveCustomBackendData = {
 	customRedirectUri: "",
 };
 
-function getGDriveCustomData(settings: SmartSyncSettings): GoogleDriveCustomBackendData {
+function getGDriveCustomData(settings: AirSyncSettings): GoogleDriveCustomBackendData {
 	return {
 		...DEFAULT_GDRIVE_CUSTOM_DATA,
 		...getBackendData<GoogleDriveCustomBackendData>(settings, "googledrive-custom"),
@@ -123,7 +123,7 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 
 	async resolveRemoteVault(
 		app: App,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		vaultName: string,
 		logger?: Logger,
 	): Promise<RemoteVaultResolution> {
@@ -134,7 +134,7 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 		return super.resolveRemoteVault(app, settings, vaultName, logger);
 	}
 
-	async disconnect(settings: SmartSyncSettings): Promise<Record<string, unknown>> {
+	async disconnect(settings: AirSyncSettings): Promise<Record<string, unknown>> {
 		await this.auth.revokeAuth();
 		clearTokens(this.secretStore, this.type);
 		const data = getGDriveCustomData(settings);
@@ -148,7 +148,7 @@ export class GoogleDriveCustomProvider extends GoogleDriveProviderBase {
 		};
 	}
 
-	protected getData(settings: SmartSyncSettings): GoogleDriveBackendData {
+	protected getData(settings: AirSyncSettings): GoogleDriveBackendData {
 		return getGDriveCustomData(settings);
 	}
 

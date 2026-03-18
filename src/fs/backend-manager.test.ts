@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BackendManager, BackendManagerDeps } from "./backend-manager";
 import type { IBackendProvider } from "./backend";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import type { IFileSystem } from "./interface";
 import type { Logger } from "../logging/logger";
 import { AuthError } from "./errors";
@@ -17,7 +17,7 @@ vi.mock("./registry", () => ({
 let fakeProvider: IBackendProvider;
 let fakeFs: IFileSystem;
 
-function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSettings {
+function mockSettings(overrides: Partial<AirSyncSettings> = {}): AirSyncSettings {
 	return {
 		vaultId: "test-vault",
 		backendType: "test",
@@ -33,7 +33,7 @@ function mockSettings(overrides: Partial<SmartSyncSettings> = {}): SmartSyncSett
 	};
 }
 
-function createDeps(settings: SmartSyncSettings, overrides: Partial<BackendManagerDeps> = {}): BackendManagerDeps {
+function createDeps(settings: AirSyncSettings, overrides: Partial<BackendManagerDeps> = {}): BackendManagerDeps {
 	const noopLogger = {
 		info: vi.fn(),
 		warn: vi.fn(),

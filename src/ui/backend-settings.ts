@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 import { GoogleDriveSettingsRenderer, GoogleDriveCustomSettingsRenderer } from "./googledrive-settings";
 
 /** Actions that settings renderers can invoke for connection flow UI */
@@ -21,7 +21,7 @@ export interface IBackendSettingsRenderer {
 
 	render(
 		containerEl: HTMLElement,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		onSave: (updates: Record<string, unknown>) => Promise<void>,
 		actions: BackendConnectionActions,
 		app: App,

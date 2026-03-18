@@ -4,7 +4,7 @@ import type { IBackendProvider } from "../backend";
 import type { IAuthProvider } from "../auth";
 import type { ISecretStore } from "../secret-store";
 import type { IFileSystem } from "../interface";
-import type { SmartSyncSettings } from "../../settings";
+import type { AirSyncSettings } from "../../settings";
 import type { Logger } from "../../logging/logger";
 import type { RemoteVaultResolution } from "../../sync/remote-vault";
 import type { IGoogleAuth } from "./auth";
@@ -18,8 +18,8 @@ import { storeTokens, readTokens, hasRefreshToken, clearTokens } from "../token-
 
 /**
  * Parse auth callback input (URL from auth server containing tokens or code).
- * Built-in flow: obsidian://smart-sync-auth?access_token=...&refresh_token=...&expires_in=...&state=...
- * Custom flow: obsidian://smart-sync-auth?code=...&state=...
+ * Built-in flow: obsidian://air-sync-auth?access_token=...&refresh_token=...&expires_in=...&state=...
+ * Custom flow: obsidian://air-sync-auth?code=...&state=...
  */
 export function parseAuthCallbackParams(input: string): Record<string, string | undefined> {
 	const trimmed = input.trim();
@@ -173,7 +173,7 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 		this.secretStore = secretStore;
 	}
 
-	createFs(app: App, settings: SmartSyncSettings, logger?: Logger): IFileSystem | null {
+	createFs(app: App, settings: AirSyncSettings, logger?: Logger): IFileSystem | null {
 		const data = this.getData(settings);
 		const tokens = readTokens(this.secretStore, this.type);
 		if (!tokens.refreshToken || !data.remoteVaultFolderId) return null;
@@ -182,7 +182,7 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 		googleAuth.setTokens(tokens.refreshToken, tokens.accessToken, data.accessTokenExpiry);
 		const client = new DriveClient((force) => googleAuth.getAccessToken(force), logger);
 		const metadataStore = new MetadataStore<DriveFile>(`${settings.vaultId}-${data.remoteVaultFolderId}`, {
-			dbNamePrefix: "smart-sync-drive",
+			dbNamePrefix: "air-sync-drive",
 			version: 1,
 		});
 		const fs = new GoogleDriveFs(client, data.remoteVaultFolderId, logger, metadataStore);
@@ -194,17 +194,17 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 		return fs;
 	}
 
-	isConnected(settings: SmartSyncSettings): boolean {
+	isConnected(settings: AirSyncSettings): boolean {
 		return hasRefreshToken(this.secretStore, this.type) && !!this.getData(settings).remoteVaultFolderId;
 	}
 
-	getIdentity(settings: SmartSyncSettings): string | null {
+	getIdentity(settings: AirSyncSettings): string | null {
 		const data = this.getData(settings);
 		if (!data.remoteVaultFolderId) return null;
 		return `${this.type}:${data.remoteVaultFolderId}`;
 	}
 
-	resetTargetState(settings: SmartSyncSettings): void {
+	resetTargetState(settings: AirSyncSettings): void {
 		const data = settings.backendData[this.type];
 		if (data) {
 			delete data.changesStartPageToken;
@@ -233,7 +233,7 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 
 	async resolveRemoteVault(
 		app: App,
-		settings: SmartSyncSettings,
+		settings: AirSyncSettings,
 		vaultName: string,
 		logger?: Logger,
 	): Promise<RemoteVaultResolution> {
@@ -246,12 +246,12 @@ export abstract class GoogleDriveProviderBase implements IBackendProvider {
 		return resolveGDriveRemoteVault(client, vaultName, cachedFolderId, logger);
 	}
 
-	async disconnect(_settings: SmartSyncSettings): Promise<Record<string, unknown>> {
+	async disconnect(_settings: AirSyncSettings): Promise<Record<string, unknown>> {
 		await this.auth.revokeAuth();
 		clearTokens(this.secretStore, this.type);
 		return { ...this.getDefaultData() };
 	}
 
-	protected abstract getData(settings: SmartSyncSettings): GoogleDriveBackendData;
+	protected abstract getData(settings: AirSyncSettings): GoogleDriveBackendData;
 	protected abstract getDefaultData(): GoogleDriveBackendData;
 }

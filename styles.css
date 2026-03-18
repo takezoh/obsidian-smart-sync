@@ -1,24 +1,24 @@
-/* Smart Sync — Conflict modal styles */
-.smart-sync-conflict-desc {
+/* Air Sync — Conflict modal styles */
+.air-sync-conflict-desc {
 	margin-bottom: 12px;
 }
 
-.smart-sync-conflict-info {
+.air-sync-conflict-info {
 	margin: 4px 0;
 	font-size: 0.9em;
 	color: var(--text-muted);
 }
 
-.smart-sync-conflict-info strong {
+.air-sync-conflict-info strong {
 	color: var(--text-normal);
 }
 
 /* Conflict summary modal styles */
-.smart-sync-summary-desc {
+.air-sync-summary-desc {
 	margin-bottom: 12px;
 }
 
-.smart-sync-summary-list {
+.air-sync-summary-list {
 	max-height: 200px;
 	overflow-y: auto;
 	margin: 8px 0;
@@ -27,20 +27,20 @@
 	color: var(--text-muted);
 }
 
-.smart-sync-summary-more {
+.air-sync-summary-more {
 	font-style: italic;
 }
 
 /* Connection status indicators */
-.smart-sync-status-connected .setting-item-description {
+.air-sync-status-connected .setting-item-description {
 	color: var(--color-green);
 	font-weight: 500;
 }
 
-.smart-sync-status-partial .setting-item-description {
+.air-sync-status-partial .setting-item-description {
 	color: var(--color-yellow);
 }
 
-.smart-sync-status-disconnected .setting-item-description {
+.air-sync-status-disconnected .setting-item-description {
 	color: var(--text-muted);
 }

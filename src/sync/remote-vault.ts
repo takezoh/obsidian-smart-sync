@@ -1,7 +1,7 @@
 /** Root folder name created in the backend storage */
-export const REMOTE_VAULT_ROOT = "obsidian-smart-sync";
+export const REMOTE_VAULT_ROOT = "obsidian-air-sync";
 
-/** Metadata stored in .smartsync/metadata.json inside each remote vault */
+/** Metadata stored in .airsync/metadata.json inside each remote vault */
 export interface RemoteVaultMetadata {
 	vaultName: string;
 }

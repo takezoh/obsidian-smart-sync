@@ -1,4 +1,4 @@
-import type { SmartSyncSettings } from "../settings";
+import type { AirSyncSettings } from "../settings";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -44,12 +44,12 @@ export class Logger {
 	private buffer: string[] = [];
 	private _deviceName: string;
 	private _adapter: LoggerAdapter;
-	private getSettings: () => SmartSyncSettings;
+	private getSettings: () => AirSyncSettings;
 	private flushTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
 		adapter: LoggerAdapter,
-		getSettings: () => SmartSyncSettings,
+		getSettings: () => AirSyncSettings,
 		deviceName: string,
 	) {
 		this._adapter = adapter;
@@ -97,9 +97,9 @@ export class Logger {
 			: level === "warn" ? console.warn
 			: console.debug;
 		if (context) {
-			consoleFn(`Smart Sync: ${message}`, context);
+			consoleFn(`Air Sync: ${message}`, context);
 		} else {
-			consoleFn(`Smart Sync: ${message}`);
+			consoleFn(`Air Sync: ${message}`);
 		}
 	}
 
@@ -110,14 +110,14 @@ export class Logger {
 		this.buffer = [];
 
 		const date = new Date().toISOString().slice(0, 10);
-		const logsDir = ".smartsync/logs";
+		const logsDir = ".airsync/logs";
 		const dir = `${logsDir}/${this._deviceName}`;
 		const filePath = `${dir}/${date}.log`;
 
 		try {
 			// Ensure directories exist
-			if (!(await this._adapter.exists(".smartsync"))) {
-				await this._adapter.mkdir(".smartsync");
+			if (!(await this._adapter.exists(".airsync"))) {
+				await this._adapter.mkdir(".airsync");
 			}
 			if (!(await this._adapter.exists(logsDir))) {
 				await this._adapter.mkdir(logsDir);

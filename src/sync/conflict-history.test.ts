@@ -39,7 +39,7 @@ function makeRecord(overrides: Partial<ConflictRecord> = {}): ConflictRecord {
 }
 
 const DEVICE = "test-desktop";
-const FILE_PATH = `.smartsync/conflicts/${DEVICE}.json`;
+const FILE_PATH = `.airsync/conflicts/${DEVICE}.json`;
 
 describe("ConflictHistory", () => {
 	let adapter: ReturnType<typeof createMockAdapter>;
@@ -91,8 +91,8 @@ describe("ConflictHistory", () => {
 		for (let i = 0; i < 499; i++) {
 			existing.push(makeRecord({ path: `old-${i}.md` }));
 		}
-		adapter.dirs.add(".smartsync");
-		adapter.dirs.add(".smartsync/conflicts");
+		adapter.dirs.add(".airsync");
+		adapter.dirs.add(".airsync/conflicts");
 		adapter.files.set(FILE_PATH, JSON.stringify(existing));
 
 		await history.append([
@@ -113,11 +113,11 @@ describe("ConflictHistory", () => {
 		expect(adapter.files.has(FILE_PATH)).toBe(false);
 	});
 
-	it("creates .smartsync and conflicts directories if missing", async () => {
+	it("creates .airsync and conflicts directories if missing", async () => {
 		await history.append([makeRecord()]);
 
-		expect(adapter.dirs.has(".smartsync")).toBe(true);
-		expect(adapter.dirs.has(".smartsync/conflicts")).toBe(true);
+		expect(adapter.dirs.has(".airsync")).toBe(true);
+		expect(adapter.dirs.has(".airsync/conflicts")).toBe(true);
 		expect(adapter.files.has(FILE_PATH)).toBe(true);
 	});
 
@@ -137,6 +137,6 @@ describe("ConflictHistory", () => {
 
 		// Verify sanitized file names
 		expect(adapter.files.has(FILE_PATH)).toBe(true);
-		expect(adapter.files.has(".smartsync/conflicts/mobile-phone.json")).toBe(true);
+		expect(adapter.files.has(".airsync/conflicts/mobile-phone.json")).toBe(true);
 	});
 });

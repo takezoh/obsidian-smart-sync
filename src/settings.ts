@@ -1,6 +1,6 @@
 import type { ConflictStrategy } from "./sync/types";
 
-export interface SmartSyncSettings {
+export interface AirSyncSettings {
 	/** Unique identifier for this vault (used as IndexedDB key) */
 	vaultId: string;
 	/** Selected backend type (e.g. "googledrive") */
@@ -16,7 +16,7 @@ export interface SmartSyncSettings {
 	/** Maximum file size in MB to sync on mobile */
 	mobileMaxFileSizeMB: number;
 
-	/** Write sync logs to .smartsync/logs/{device}/{date}.log */
+	/** Write sync logs to .airsync/logs/{device}/{date}.log */
 	enableLogging: boolean;
 	/** Minimum log level to write */
 	logLevel: "debug" | "info" | "warn" | "error";
@@ -25,7 +25,7 @@ export interface SmartSyncSettings {
 	backendData: Record<string, Record<string, unknown>>;
 }
 
-export const DEFAULT_SETTINGS: SmartSyncSettings = {
+export const DEFAULT_SETTINGS: AirSyncSettings = {
 	vaultId: "",
 	backendType: "googledrive",
 	conflictStrategy: "auto_merge",

@@ -4,13 +4,13 @@ import type { RemoteVaultResolution, RemoteVaultMetadata } from "../../sync/remo
 import { REMOTE_VAULT_ROOT } from "../../sync/remote-vault";
 import { FOLDER_MIME } from "./types";
 
-const SMARTSYNC_DIR = ".smartsync";
+const AIRSYNC_DIR = ".airsync";
 const METADATA_FILE = "metadata.json";
 
 /**
  * Resolve or create a remote vault folder in Google Drive.
  *
- * Layout: Drive root / obsidian-smart-sync / {uuid} / .smartsync/metadata.json
+ * Layout: Drive root / obsidian-air-sync / {uuid} / .airsync/metadata.json
  *
  * The cached folder ID and last known vault name are read from settings.backendData
  * by the caller (GoogleDriveProvider).
@@ -26,7 +26,7 @@ export async function resolveGDriveRemoteVault(
 		return resolveLinked(client, cachedFolderId, vaultName, logger);
 	}
 
-	// 2. Find or create the root "obsidian-smart-sync" folder
+	// 2. Find or create the root "obsidian-air-sync" folder
 	const rootFolder = await findOrCreateFolder(client, "root", REMOTE_VAULT_ROOT);
 	logger?.debug("Remote vault root folder", { id: rootFolder.id });
 
@@ -64,7 +64,7 @@ async function resolveNew(
 	vaultName: string,
 	logger?: Logger,
 ): Promise<RemoteVaultResolution> {
-	// List all child folders under obsidian-smart-sync
+	// List all child folders under obsidian-air-sync
 	const children = await client.listFiles(rootFolderId);
 	const folders = children.files.filter((f) => f.mimeType === FOLDER_MIME);
 
@@ -84,8 +84,8 @@ async function resolveNew(
 	logger?.info("Creating new remote vault", { id: remoteVaultId, vaultName });
 
 	const vaultFolder = await client.createFolder(remoteVaultId, rootFolderId);
-	const smartsyncFolder = await client.createFolder(SMARTSYNC_DIR, vaultFolder.id);
-	await writeMetadata(client, smartsyncFolder.id, { vaultName });
+	const airsyncFolder = await client.createFolder(AIRSYNC_DIR, vaultFolder.id);
+	await writeMetadata(client, airsyncFolder.id, { vaultName });
 
 	return {
 		backendUpdates: { remoteVaultFolderId: vaultFolder.id, lastKnownVaultName: vaultName },
@@ -106,10 +106,10 @@ async function readMetadata(
 	client: DriveClient,
 	vaultFolderId: string,
 ): Promise<RemoteVaultMetadata | null> {
-	const smartsyncFolder = await client.findChildByName(vaultFolderId, SMARTSYNC_DIR, FOLDER_MIME);
-	if (!smartsyncFolder) return null;
+	const airsyncFolder = await client.findChildByName(vaultFolderId, AIRSYNC_DIR, FOLDER_MIME);
+	if (!airsyncFolder) return null;
 
-	const metaFile = await client.findChildByName(smartsyncFolder.id, METADATA_FILE);
+	const metaFile = await client.findChildByName(airsyncFolder.id, METADATA_FILE);
 	if (!metaFile) return null;
 
 	const content = await client.downloadFile(metaFile.id);
@@ -121,11 +121,11 @@ async function readMetadata(
 
 async function writeMetadata(
 	client: DriveClient,
-	smartsyncFolderId: string,
+	airsyncFolderId: string,
 	metadata: RemoteVaultMetadata,
 ): Promise<void> {
 	const content = new TextEncoder().encode(JSON.stringify(metadata)).buffer.slice(0);
-	await client.uploadFile(METADATA_FILE, smartsyncFolderId, content, "application/json");
+	await client.uploadFile(METADATA_FILE, airsyncFolderId, content, "application/json");
 }
 
 async function updateMetadataIfNeeded(
@@ -134,17 +134,17 @@ async function updateMetadataIfNeeded(
 	vaultName: string,
 	logger?: Logger,
 ): Promise<void> {
-	const smartsyncFolder = await client.findChildByName(vaultFolderId, SMARTSYNC_DIR, FOLDER_MIME);
-	if (!smartsyncFolder) {
-		const newFolder = await client.createFolder(SMARTSYNC_DIR, vaultFolderId);
+	const airsyncFolder = await client.findChildByName(vaultFolderId, AIRSYNC_DIR, FOLDER_MIME);
+	if (!airsyncFolder) {
+		const newFolder = await client.createFolder(AIRSYNC_DIR, vaultFolderId);
 		await writeMetadata(client, newFolder.id, { vaultName });
 		logger?.info("Created missing metadata.json", { vaultName });
 		return;
 	}
 
-	const metaFile = await client.findChildByName(smartsyncFolder.id, METADATA_FILE);
+	const metaFile = await client.findChildByName(airsyncFolder.id, METADATA_FILE);
 	if (!metaFile) {
-		await writeMetadata(client, smartsyncFolder.id, { vaultName });
+		await writeMetadata(client, airsyncFolder.id, { vaultName });
 		logger?.info("Created missing metadata.json", { vaultName });
 		return;
 	}
@@ -162,6 +162,6 @@ async function updateMetadataIfNeeded(
 
 	// Update metadata.json with new vault name
 	const newContent = new TextEncoder().encode(JSON.stringify({ vaultName })).buffer.slice(0);
-	await client.uploadFile(METADATA_FILE, smartsyncFolder.id, newContent, "application/json", metaFile.id);
+	await client.uploadFile(METADATA_FILE, airsyncFolder.id, newContent, "application/json", metaFile.id);
 	logger?.info("Updated metadata.json vault name", { vaultName });
 }

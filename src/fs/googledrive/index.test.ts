@@ -430,7 +430,7 @@ describe("GoogleDriveFs cache persistence", () => {
 			getChangesStartToken: vi.fn().mockResolvedValue("token-abc"),
 		} as never;
 
-		const store = new MetadataStore<DriveFile>("persist-test", { dbNamePrefix: "smart-sync-drive", version: 1 });
+		const store = new MetadataStore<DriveFile>("persist-test", { dbNamePrefix: "air-sync-drive", version: 1 });
 
 		// First instance: fullScan populates and persists
 		const fs1 = new GoogleDriveFs(mockClient, "root", undefined, store);
