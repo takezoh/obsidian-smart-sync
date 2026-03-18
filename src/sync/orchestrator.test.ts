@@ -85,8 +85,18 @@ describe("SyncOrchestrator", () => {
 			await orchestrator.close();
 		});
 
-		it("notifies 'Everything up to date' when both sides are empty", async () => {
+		it("does not show sync completion notice when logging is disabled", async () => {
 			const deps = createDeps();
+			const orchestrator = new SyncOrchestrator(deps);
+			await orchestrator.runSync();
+			expect(deps.notify).not.toHaveBeenCalled();
+			expect(deps.onStatusChange).toHaveBeenCalledWith("idle");
+			await orchestrator.close();
+		});
+
+		it("shows sync completion notice when logging is enabled", async () => {
+			const settings = { ...mockSettings(), enableLogging: true };
+			const deps = createDeps({ getSettings: () => settings });
 			const orchestrator = new SyncOrchestrator(deps);
 			await orchestrator.runSync();
 			expect(deps.notify).toHaveBeenCalledWith("Everything up to date");
