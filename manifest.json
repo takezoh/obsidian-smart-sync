@@ -1,7 +1,7 @@
 {
 	"id": "air-sync",
 	"name": "Air Sync",
-	"version": "0.1.12",
+	"version": "0.1.13",
 	"minAppVersion": "1.11.4",
 	"description": "Sync your vault bidirectionally with Google Drive.",
 	"author": "Takehito Gondo",
