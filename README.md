@@ -4,7 +4,7 @@ Sync your Obsidian vault bidirectionally with cloud storage, resolving conflicts
 
 Currently supports Google Drive as a storage backend.
 
-> **Requires a Google account.** This plugin communicates with Google Drive API (`googleapis.com`) for file sync and with an auth server (`auth-smartsync.takezo.dev`) for OAuth token exchange. No vault data is sent to the auth server — it only handles authentication tokens. Custom OAuth allows you to own the authorization, configure broader access scopes, and exchange tokens directly with Google.
+> **Requires a Google account.** This plugin communicates with Google Drive API (`googleapis.com`) for file sync and with an auth server (`auth-smartsync.takezo.dev`) for OAuth token exchange. No vault data is sent to the auth server — it only handles authentication tokens. Custom OAuth lets you manage authorization independently.
 
 ## Features
 
@@ -33,17 +33,9 @@ The first sync after connecting performs a full scan of the Drive folder. This m
 
 ### Custom OAuth (advanced)
 
-The built-in OAuth uses the `drive.file` scope, which only allows access to files created by the plugin. With custom OAuth, you own the authorization and can grant broader access — for example, the `drive` scope allows the plugin to access files created outside the plugin as well.
+The built-in OAuth uses the `drive.file` scope, which only allows access to files created by the plugin itself. With custom OAuth, you can use your own Google Cloud OAuth client to manage authorization independently.
 
-1. Create an OAuth 2.0 client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. Enable the Google Drive API
-3. Set the authorized redirect URI (default: `https://smartsync.takezo.dev/callback`)
-4. In plugin settings, select **Google Drive (custom OAuth)** as the backend
-5. Enter your client ID and client secret
-6. Configure the scope as needed (default: `drive.file`, set to `https://www.googleapis.com/auth/drive` for full access)
-7. Click **Connect to Google Drive**
-
-The default redirect page (`https://smartsync.takezo.dev/callback`) is a [single static HTML file](https://github.com/takezoh/smart-sync-auth/blob/main/docs/callback/index.html) that only relays the authorization code back to the plugin. The code is protected by PKCE — it cannot be used without the verifier held only by the plugin. You can also host your own redirect page and configure its URL in the settings.
+The authorization code exchange is protected by PKCE — the code cannot be used without the verifier held only by the plugin.
 
 ### Troubleshooting
 
