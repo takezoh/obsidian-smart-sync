@@ -26,6 +26,7 @@ function mockSettings(overrides: Partial<AirSyncSettings> = {}): AirSyncSettings
 		conflictStrategy: "auto_merge",
 		enableThreeWayMerge: false,
 		mobileMaxFileSizeMB: 10,
+		slowPollIntervalSec: 0,
 		enableLogging: false,
 		logLevel: "info",
 		backendData: {},

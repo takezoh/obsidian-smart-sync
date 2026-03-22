@@ -61,6 +61,7 @@ function createDeps(overrides: Partial<SyncSchedulerDeps> = {}) {
 		isExcluded: () => false,
 		registerEvent: vi.fn(),
 		register: vi.fn((cb: () => void) => { cleanups.push(cb); }),
+		getSlowPollIntervalSec: () => 0,
 		vaultHandlers,
 		workspaceHandlers,
 		cleanups,
@@ -123,7 +124,7 @@ describe("SyncScheduler", () => {
 			expect(deps.localTracker.getDirtyPaths().has("excluded/note.md")).toBe(false);
 		});
 
-		it("triggers debounced sync on vault change", () => {
+		it("triggers sync via heartbeat after debounce window", () => {
 			const handler = deps.vaultHandlers.get("modify") as VaultHandler;
 			handler(makeFile("note.md"));
 			vi.advanceTimersByTime(5000);
@@ -153,9 +154,21 @@ describe("SyncScheduler", () => {
 			expect(deps.runSync).not.toHaveBeenCalled();
 		});
 
-		it("skips debounced sync on vault change when remoteFs is null", () => {
+		it("skips sync via heartbeat when remoteFs is null", () => {
 			scheduler.destroy();
 			deps = createDeps({ remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			const handler = deps.vaultHandlers.get("modify") as VaultHandler;
+			handler(makeFile("note.md"));
+			vi.advanceTimersByTime(5000);
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("skips sync via heartbeat when already syncing", () => {
+			scheduler.destroy();
+			deps = createDeps({ orchestrator: { runSync: vi.fn().mockResolvedValue(undefined), pullSingle: vi.fn().mockResolvedValue(undefined), isSyncing: () => true } });
 			scheduler = new SyncScheduler(deps);
 			scheduler.start();
 
@@ -273,12 +286,116 @@ describe("SyncScheduler", () => {
 		});
 	});
 
+	describe("slow poll", () => {
+		it("does not poll when slowPollIntervalSec is 0", () => {
+			// interval is 0 (default in createDeps), so slow poll is disabled
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(300_000); // 5 minutes
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("triggers sync after slow poll interval elapses since last sync", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 60 });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(59_000);
+			expect(deps.runSync).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(1_000); // now at 60s
+			expect(deps.runSync).toHaveBeenCalledTimes(1);
+		});
+
+		it("does not fire before interval elapses", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 60 });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(59_999);
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("resets interval when notifySyncComplete is called again", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 60 });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(30_000);
+			// A local-change sync finishes partway through the interval
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(30_000); // only 30s since last completion
+			expect(deps.runSync).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(30_000); // now 60s since last completion
+			expect(deps.runSync).toHaveBeenCalledTimes(1);
+		});
+
+		it("does not poll when remoteFs is null", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 60, remoteFs: () => null });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(120_000);
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("does not poll when already syncing", () => {
+			const runSync = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+			scheduler.destroy();
+			deps = createDeps({
+				getSlowPollIntervalSec: () => 60,
+				orchestrator: { runSync, pullSingle: vi.fn().mockResolvedValue(undefined), isSyncing: () => true },
+			});
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			scheduler.notifySyncComplete();
+			vi.advanceTimersByTime(120_000);
+			expect(runSync).not.toHaveBeenCalled();
+		});
+
+		it("debounce-triggered sync takes priority over slow poll in same tick", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 5 });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+
+			// Vault change schedules debounce sync at now+5s; slow poll also due at now+5s
+			scheduler.notifySyncComplete();
+			const handler = deps.vaultHandlers.get("modify") as VaultHandler;
+			handler(makeFile("note.md"));
+			vi.advanceTimersByTime(5000);
+			// Both conditions met but heartbeat should fire runSync exactly once per tick
+			expect(deps.runSync).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe("destroy", () => {
-		it("cancels debounced sync", () => {
+		it("stops heartbeat and prevents further syncs", () => {
 			const handler = deps.vaultHandlers.get("modify") as VaultHandler;
 			handler(makeFile("note.md"));
 			scheduler.destroy();
 			vi.advanceTimersByTime(5000);
+			expect(deps.runSync).not.toHaveBeenCalled();
+		});
+
+		it("stops slow poll after destroy", () => {
+			scheduler.destroy();
+			deps = createDeps({ getSlowPollIntervalSec: () => 60 });
+			scheduler = new SyncScheduler(deps);
+			scheduler.start();
+			scheduler.notifySyncComplete();
+
+			scheduler.destroy();
+			vi.advanceTimersByTime(120_000);
 			expect(deps.runSync).not.toHaveBeenCalled();
 		});
 	});

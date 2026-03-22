@@ -1,4 +1,3 @@
-import { debounce } from "obsidian";
 import type { EventRef, Workspace, Vault, TAbstractFile, TFile } from "obsidian";
 import type { IFileSystem } from "../fs/interface";
 import type { SyncStateStore } from "./state";
@@ -6,6 +5,7 @@ import type { LocalChangeTracker } from "./local-tracker";
 import { hasChanged, hasRemoteChanged } from "./change-compare";
 
 const DEBOUNCE_MS = 5000;
+const HEARTBEAT_MS = 1000;
 
 export interface SyncOrchestrator {
 	runSync(): Promise<void>;
@@ -24,22 +24,18 @@ export interface SyncSchedulerDeps {
 	isExcluded: (path: string) => boolean;
 	registerEvent: (ref: EventRef) => void;
 	register: (cb: () => void) => void;
+	getSlowPollIntervalSec: () => number;
 }
 
 export class SyncScheduler {
 	private deps: SyncSchedulerDeps;
-	private debouncedSync: ReturnType<typeof debounce>;
+	private nextSyncAt: number | null = null;
+	private lastSyncCompletedAt: number;
+	private heartbeatHandle: ReturnType<typeof setInterval> | null = null;
 
 	constructor(deps: SyncSchedulerDeps) {
 		this.deps = deps;
-		this.debouncedSync = debounce(
-			() => {
-				if (!this.deps.remoteFs()) return;
-				void deps.orchestrator.runSync();
-			},
-			DEBOUNCE_MS,
-			true,
-		);
+		this.lastSyncCompletedAt = 0;
 	}
 
 	start(): void {
@@ -48,10 +44,40 @@ export class SyncScheduler {
 		this.wireVisibilityEvent();
 		this.wireFocusEvent();
 		this.wireFileOpenEvent();
+		this.heartbeatHandle = setInterval(() => { this.onHeartbeat(); }, HEARTBEAT_MS);
 	}
 
 	destroy(): void {
-		this.debouncedSync.cancel();
+		if (this.heartbeatHandle !== null) {
+			clearInterval(this.heartbeatHandle);
+			this.heartbeatHandle = null;
+		}
+		this.nextSyncAt = null;
+	}
+
+	/** Called by the orchestrator when a sync cycle completes. */
+	notifySyncComplete(): void {
+		this.lastSyncCompletedAt = Date.now();
+	}
+
+	private onHeartbeat(): void {
+		const now = Date.now();
+		const remoteFs = this.deps.remoteFs();
+		if (!remoteFs) return;
+		if (this.deps.orchestrator.isSyncing()) return;
+
+		// Debounce path: a vault change scheduled a sync
+		if (this.nextSyncAt !== null && now >= this.nextSyncAt) {
+			this.nextSyncAt = null;
+			void this.deps.orchestrator.runSync();
+			return;
+		}
+
+		// Slow poll path: time since last sync exceeds the configured interval
+		const slowPollMs = this.deps.getSlowPollIntervalSec() * 1000;
+		if (slowPollMs > 0 && now >= this.lastSyncCompletedAt + slowPollMs) {
+			void this.deps.orchestrator.runSync();
+		}
 	}
 
 	private wireFocusEvent(): void {
@@ -70,7 +96,7 @@ export class SyncScheduler {
 		const onVaultChange = (file: TAbstractFile) => {
 			if (!isExcluded(file.path)) {
 				localTracker.markDirty(file.path);
-				this.debouncedSync();
+				this.nextSyncAt = Date.now() + DEBOUNCE_MS;
 			}
 		};
 
@@ -82,7 +108,7 @@ export class SyncScheduler {
 				localTracker.markDirty(oldPath);
 			}
 			if (!isExcluded(file.path) || !isExcluded(oldPath)) {
-				this.debouncedSync();
+				this.nextSyncAt = Date.now() + DEBOUNCE_MS;
 			}
 		};
 
