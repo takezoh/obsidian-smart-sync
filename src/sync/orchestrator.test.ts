@@ -15,6 +15,7 @@ function mockSettings() {
 		conflictStrategy: "auto_merge" as const,
 		enableThreeWayMerge: false,
 		mobileMaxFileSizeMB: 10,
+		slowPollIntervalSec: 0,
 		enableLogging: false,
 		logLevel: "info" as const,
 		backendData: {} as Record<string, Record<string, unknown>>,

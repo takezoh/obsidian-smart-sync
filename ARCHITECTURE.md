@@ -2,7 +2,7 @@
 
 ## Vision
 
-Sync should be invisible -- like air. When the user opens Obsidian, changes since the last session are reflected within hundreds of milliseconds. After editing, background sync runs on a 5-second batch interval. Opening a note always shows the latest version. If the network drops or the app crashes, the worst case is a duplicate file; user data is never lost. Conflicts are resolved transparently via auto-merge, and the user is only prompted when edits truly contradict each other.
+Sync should be invisible -- like air. When the user opens Obsidian, changes since the last session are reflected within hundreds of milliseconds. After editing, background sync fires 5 seconds after the last local change. When slow polling is enabled, the plugin also checks for remote changes at a configurable interval even when the user is idle. Opening a note always shows the latest version. If the network drops or the app crashes, the worst case is a duplicate file; user data is never lost. Conflicts are resolved transparently via auto-merge, and the user is only prompted when edits truly contradict each other.
 
 ## Design principles
 

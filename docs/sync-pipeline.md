@@ -137,17 +137,29 @@ Failed actions are not committed; they will be re-detected on the next sync cycl
 
 ## Sync triggers
 
-`SyncScheduler` (`scheduler.ts`) registers five event-driven sync triggers on `start()`:
+`SyncScheduler` (`scheduler.ts`) registers event-driven sync triggers on `start()` and runs a 1-second heartbeat to evaluate scheduled syncs.
 
-| Trigger | Event | Behaviour |
-|---------|-------|-----------|
-| Vault change | `create` / `modify` / `delete` / `rename` | Marks path dirty via `localTracker.markDirty()`, then calls `debouncedSync()` (5 s debounce). Consecutive edits reset the timer so sync fires 5 s after the last change. |
-| Visibility | `document.visibilitychange` → `"visible"` | Immediately calls `runSync()` when the app returns to the foreground (e.g. mobile app switch, desktop minimize restore), unless a sync is already running. |
-| Focus | `window.focus` | Immediately calls `runSync()` when the window gains focus (e.g. switching back from another desktop app), unless a sync is already running. |
+### Heartbeat and scheduled syncs
+
+The scheduler maintains two fields that drive when the next sync fires:
+
+- **`nextSyncAt`** (`number | null`) — set by vault change events to `Date.now() + 5000`. The heartbeat fires `runSync()` when `now >= nextSyncAt`, then clears the field. Consecutive edits keep resetting `nextSyncAt`, so sync fires 5 s after the *last* change in a burst.
+- **`lastSyncCompletedAt`** (`number`) — initialized to `0`. Updated by `notifySyncComplete()`, which the orchestrator calls via its `onSyncComplete` callback at the end of every successful sync cycle. When `slowPollIntervalSec > 0`, the heartbeat fires `runSync()` whenever `now >= lastSyncCompletedAt + slowPollIntervalSec * 1000`. Setting `slowPollIntervalSec` to `0` disables polling for remote changes when local is idle.
+
+The heartbeat checks `isSyncing()` and `remoteFs()` before calling `runSync()` in either path.
+
+### Trigger table
+
+| Trigger | Mechanism | Behaviour |
+| ------- | --------- | --------- |
+| Vault change | `create` / `modify` / `delete` / `rename` | Marks path dirty via `localTracker.markDirty()` and sets `nextSyncAt = now + 5 s`. The heartbeat fires the sync once the debounce window elapses. |
+| Slow poll | Heartbeat (`setInterval`, 1 s) | When `slowPollIntervalSec > 0`, fires `runSync()` if the configured interval has elapsed since `lastSyncCompletedAt`. Detects remote changes while the user is idle. Disabled when `slowPollIntervalSec = 0`. Default is 300 s (5 minutes). |
+| Visibility | `document.visibilitychange` → `"visible"` | Immediately calls `runSync()` when the app returns to the foreground, unless a sync is already running. |
+| Focus | `window.focus` | Immediately calls `runSync()` when the window gains focus, unless a sync is already running. |
 | Online | `window.online` | Immediately calls `runSync()` when the network connection is restored. |
 | File open | `workspace.on("file-open")` | Priority pull for the opened file (see below). |
 
-All triggers are event-driven — there is no periodic timer. All triggers except file-open run a full sync cycle through the pipeline. Ignored paths (from `ignorePatterns`) are excluded at the vault-event level — dirty marks and debounce are skipped entirely.
+All triggers except slow poll are event-driven. All triggers except file-open run a full sync cycle through the pipeline. Ignored paths (from `ignorePatterns`) are excluded at the vault-event level — dirty marks and `nextSyncAt` updates are skipped entirely.
 
 ## Active file priority sync
 

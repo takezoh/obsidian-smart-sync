@@ -16,6 +16,9 @@ export interface AirSyncSettings {
 	/** Maximum file size in MB to sync on mobile */
 	mobileMaxFileSizeMB: number;
 
+	/** Seconds between automatic background sync checks (0 = disabled) */
+	slowPollIntervalSec: number;
+
 	/** Write sync logs to .airsync/logs/{device}/{date}.log */
 	enableLogging: boolean;
 	/** Minimum log level to write */
@@ -33,6 +36,7 @@ export const DEFAULT_SETTINGS: AirSyncSettings = {
 	syncDotPaths: [],
 	enableThreeWayMerge: true,
 	mobileMaxFileSizeMB: 10,
+	slowPollIntervalSec: 300,
 	enableLogging: false,
 	logLevel: "info",
 	backendData: {},

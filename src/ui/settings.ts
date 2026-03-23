@@ -19,6 +19,24 @@ export class AirSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Sync").setHeading();
 
 		new Setting(containerEl)
+			.setName("Slow poll interval (seconds)")
+			.setDesc(
+				"How often to check for remote changes while local is idle. Set to 0 to disable background polling."
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("300")
+					.setValue(String(this.plugin.settings.slowPollIntervalSec))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.slowPollIntervalSec = num;
+							await this.plugin.saveSettings();
+						}
+					})
+			);
+
+		new Setting(containerEl)
 			.setName("Conflict strategy")
 			.setDesc(
 				"How to resolve conflicts when both local and remote files have changed."

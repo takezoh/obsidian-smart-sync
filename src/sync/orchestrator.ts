@@ -55,6 +55,8 @@ export interface SyncOrchestratorDeps {
 	isMobile: () => boolean;
 	/** Returns true when the backend is in the process of connecting */
 	isBackendConnecting?: () => boolean;
+	/** Called after a full sync cycle completes (success or partial error) */
+	onSyncComplete?: () => void;
 	localTracker: LocalChangeTracker;
 	logger?: Logger;
 }
@@ -153,6 +155,7 @@ export class SyncOrchestrator {
 				this.deps.localTracker.acknowledge(allPaths);
 			} while (this.syncPending);
 		});
+		this.deps.onSyncComplete?.();
 	}
 
 	/**

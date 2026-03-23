@@ -90,6 +90,7 @@ export default class AirSyncPlugin extends Plugin {
 			localTracker: this.localTracker,
 			logger: this.logger,
 			isBackendConnecting: () => this.backendManager.isConnecting(),
+			onSyncComplete: () => this.scheduler.notifySyncComplete(),
 		});
 
 		this.scheduler = new SyncScheduler({
@@ -103,6 +104,7 @@ export default class AirSyncPlugin extends Plugin {
 			isExcluded: (path) => this.orchestrator.isExcluded(path),
 			registerEvent: (ref) => this.registerEvent(ref),
 			register: (cb) => this.register(cb),
+			getSlowPollIntervalSec: () => this.settings.slowPollIntervalSec,
 		});
 
 		this.settingTab = new AirSyncSettingTab(this.app, this);
